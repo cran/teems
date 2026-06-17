@@ -1,0 +1,212 @@
+skip_on_cran()
+
+dat_input <- Sys.getenv("GTAP12_dat")
+par_input <- Sys.getenv("GTAP12_par")
+set_input <- Sys.getenv("GTAP12_set")
+
+write_dir <- file.path(tools::R_user_dir("teems", "cache"), "solve")
+
+if (dir.exists(write_dir)) {
+  unlink(write_dir, recursive = TRUE)
+}
+
+dir.create(write_dir, recursive = TRUE)
+ems_option_set(verbose = FALSE,
+               tempdir = write_dir)
+withr::defer(ems_option_reset(), teardown_env())
+
+static_data <- ems_data(
+  dat_input = dat_input,
+  par_input = par_input,
+  set_input = set_input,
+  REG = "big3",
+  ACTS = "macro_sector",
+  ENDW = "labor_agg"
+)
+
+dynamic_data <- ems_data(
+  dat_input = dat_input,
+  par_input = par_input,
+  set_input = set_input,
+  REG = "big3",
+  ACTS = "macro_sector",
+  ENDW = "labor_agg",
+  time_steps = c(0, 1, 2)
+)
+
+dynamic_model <- "GTAP-RE"
+dynamic_model_files <- ems_example(dynamic_model, write_dir)
+dynamic_model_file <- dynamic_model_files[["model_file"]]
+dynamic_closure_file <- dynamic_model_files[["closure_file"]]
+dynamic_model <- ems_model(dynamic_model_file, dynamic_closure_file)
+
+static_model <- "GTAPv7"
+static_model_files <- ems_example(static_model, write_dir)
+static_model_file <- static_model_files[["model_file"]]
+static_closure_file <- static_model_files[["closure_file"]]
+static_model <- ems_model(static_model_file, static_closure_file)
+
+variant <- Sys.info()["sysname"]
+
+test_that("ems_solve suppress_outputs returns cmf_path character", {
+  nest_temp("solve_suppress", write_dir)
+  cmf_path <- ems_deploy(static_data, static_model)
+  result <- ems_solve(cmf_path, suppress_outputs = TRUE)
+  expect_type(result, "NULL")
+})
+
+test_that("ems_solve errors when cmf_path is missing", {
+  expect_snapshot_error(ems_solve())
+})
+
+test_that("ems_solve errors when n_tasks is not integerish", {
+  nest_temp("solve_err_tasks", write_dir)
+  cmf_path <- ems_deploy(static_data, static_model)
+  expect_snapshot_error(ems_solve(cmf_path, n_tasks = 1.5))
+})
+
+test_that("ems_solve errors when steps is not length 3", {
+  nest_temp("solve_err_steps", write_dir)
+  cmf_path <- ems_deploy(static_data, static_model)
+  expect_snapshot_error(ems_solve(cmf_path, steps = c(2L, 4L)))
+})
+
+test_that("ems_solve errors when steps are mixed odd/even", {
+  nest_temp("solve_err_mixed", write_dir)
+  cmf_path <- ems_deploy(static_data, static_model)
+  expect_snapshot_error(ems_solve(cmf_path, steps = c(2L, 3L, 4L)))
+})
+
+test_that("ems_solve errors when SBBD used with static model", {
+  nest_temp("solve_err_sbbd", write_dir)
+  cmf_path <- ems_deploy(static_data, static_model)
+  expect_snapshot_error(ems_solve(cmf_path, matrix_method = "SBBD"))
+})
+
+test_that("ems_solve errors when solution errors detected", {
+  nest_temp("solve_err_error", write_dir)
+  shock <- ems_uniform_shock("pop", 1e6)
+  cmf_path <- ems_deploy(static_data, static_model, shock)
+  expect_snapshot(ems_solve(cmf_path),
+    error = TRUE,
+    transform = function(lines) {
+      gsub("solver_out_\\d{4}\\.txt", "solver_out_HHMM.txt", lines)
+    },
+    variant = variant
+  )
+})
+
+test_that("ems_solve errors when solution singularity detected", {
+  nest_temp("solve_err_sing", write_dir)
+  cmf_path <- ems_deploy(static_data, static_model, swap_out = "pop")
+  expect_snapshot(ems_solve(cmf_path),
+    error = TRUE,
+    transform = function(lines) {
+      gsub("solver_out_\\d{4}\\.txt", "solver_out_HHMM.txt", lines)
+    },
+    variant = variant
+  )
+})
+
+test_that("ems_solve warns when poor accuracy", {
+  nest_temp("solve_wrn_accur", write_dir)
+  shock <- ems_uniform_shock("pop", 200)
+  cmf_path <- ems_deploy(static_data, static_model, shock)
+  expect_snapshot_warning(ems_solve(
+    cmf_path,
+    solution_method = "mod_midpoint"
+  ))
+})
+
+test_that("ems_solve returns NULL when suppress_outputs", {
+  nest_temp("suppress", write_dir)
+  cmf_path <- ems_deploy(static_data, static_model)
+  expect_null(ems_solve(cmf_path, suppress_outputs = TRUE))
+})
+
+test_that("ems_solve informs terminal run", {
+  nest_temp("solve_info_terminal", write_dir)
+  cmf_path <- ems_deploy(static_data, static_model)
+  expect_snapshot(
+    ems_solve(cmf_path, terminal_run = TRUE),
+    transform = function(lines) {
+      gsub("solver_out_\\d{4}\\.txt", "solver_out_HHMM.txt", lines)
+    },
+    variant = variant
+  )
+})
+
+test_that("ems_solve returns the same output across static matrix methods", {
+  nest_temp("solve_static_method", write_dir)
+  numeraire <- ems_uniform_shock("pfactwld", 5)
+  cmf_path <- ems_deploy(static_data, static_model, numeraire)
+  LU <- ems_solve(
+    cmf_path,
+    solution_method = "mod_midpoint",
+    matrix_method = "LU",
+    n_subintervals = 2
+  )
+
+  DBBD <- ems_solve(
+    cmf_path,
+    solution_method = "mod_midpoint",
+    matrix_method = "DBBD",
+    n_subintervals = 2,
+    n_tasks = 2
+  )
+
+  check <- all.equal(LU, DBBD, tolerance = 1e-4)
+  expect_true(check)
+})
+
+test_that("ems_solve returns the same output across dynamic matrix methods", {
+  nest_temp("solve_dynamic_method", write_dir)
+  numeraire <- ems_uniform_shock("pfactwld", 5)
+  cmf_path <- ems_deploy(dynamic_data, dynamic_model, numeraire)
+  LU <- ems_solve(
+    cmf_path,
+    solution_method = "mod_midpoint",
+    matrix_method = "LU",
+    n_subintervals = 2
+  )
+
+  SBBD <- ems_solve(
+    cmf_path,
+    solution_method = "mod_midpoint",
+    matrix_method = "SBBD",
+    n_subintervals = 2,
+    n_tasks = 2
+  )
+
+  NDBBD <- ems_solve(
+    cmf_path,
+    solution_method = "mod_midpoint",
+    matrix_method = "NDBBD",
+    n_subintervals = 2,
+    n_tasks = 2
+  )
+  
+  LU_SBBD_check <- all.equal(LU, SBBD, tolerance = 1e-4)
+  LU_NDBBD_check <- all.equal(LU, NDBBD, tolerance = 1e-4)
+  check <- c(LU_SBBD_check, LU_NDBBD_check)
+  expect_all_true(check)
+})
+
+test_that("ems_solve examples work", {
+  nest_temp("solve_examples", write_dir)
+  cmf_path <- ems_deploy(dynamic_data,
+                         dynamic_model)
+  # The following examples require the teems solver to be built.
+  # See https://teemsphere.github.io/ to get started.
+
+  # Solving a static model with Johansen:
+  expect_s3_class(ems_solve(cmf_path), "tbl_df")
+
+  # Solving a dynamic model with the SBBD method:
+  expect_s3_class(ems_solve(cmf_path,
+            solution_method = "mod_midpoint",
+            matrix_method = "SBBD",
+            n_tasks = 6), "tbl_df")
+})
+
+unlink(tools::R_user_dir("teems", "cache"), recursive = TRUE)

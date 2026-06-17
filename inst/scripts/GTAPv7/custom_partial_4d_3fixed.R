@@ -1,0 +1,65 @@
+# 4D variable (atall: MARGm x COMMc x REGs x REGd), 3 dims fixed
+# reduce_shock picks free_idx=[MARGm] (k=1)
+# write_ragged: single-column branch (1 row, MARGm size=1)
+
+dat <- ems_data(
+  dat_input = dat_input,
+  par_input = par_input,
+  set_input = set_input,
+  REG = "big3",
+  ACTS = "macro_sector",
+  ENDW = "labor_agg"
+)
+
+model <- ems_model(
+  model_file = model_file,
+  closure_file = closure_file
+)
+
+REG <- c("chn", "usa", "row")
+COMM <- c("svces", "food", "crops", "mnfcs", "livestock")
+MARG <- "svces"
+
+set.seed(42)
+
+atall_full <- expand.grid(
+  MARGm = MARG,
+  COMMc = COMM,
+  REGs = REG,
+  REGd = REG,
+  stringsAsFactors = FALSE
+)
+atall_full$Value <- 0
+atall_full <- atall_full[do.call(order, atall_full), ]
+
+# Fix COMMc="crops", REGs="chn", REGd="usa"; free dim MARGm(1), n=1
+# reduce_shock: free_idx=[MARGm], k=1
+atall <- atall_full[
+  atall_full$COMMc == "crops" &
+    atall_full$REGs == "chn" &
+    atall_full$REGd == "usa",
+]
+atall$Value <- runif(nrow(atall))
+
+atall_shk <- ems_custom_shock(var = "atall", input = atall)
+
+
+cmf_path <- ems_deploy(
+  .data = dat,
+  model = model,
+  shock = atall_shk
+)
+
+outputs <- ems_solve(
+  cmf_path = cmf_path,
+  matrix_method = "LU",
+  solution_method = "Johansen"
+)
+
+# checks
+atall <- merge(atall, atall_full, by = setdiff(colnames(atall), "Value"), all.y = TRUE)
+atall$Value.x <- ifelse(is.na(atall$Value.x), atall$Value.y, atall$Value.x)
+atall <- atall[, seq_len(ncol(atall) - 1)]
+colnames(atall)[ncol(atall)] <- "Value"
+
+check <- all.equal(atall, outputs$dat$atall, check.attributes = FALSE, tolerance = 1e-6)

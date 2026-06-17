@@ -1,0 +1,28 @@
+#' @keywords internal
+#' @noRd
+.load_closure <- function(closure_file,
+                          model_file,
+                          call) {
+
+  closure <- readLines(closure_file)
+  closure_file <- basename(closure_file)
+
+  closure <- gsub(";", "", closure)
+  closure <- closure[closure != ""]
+
+  if (!any(grepl("exogenous", closure[[1]], ignore.case = TRUE)) ||
+    !any(grepl("rest endogenous", closure[[length(closure)]], ignore.case = TRUE))) {
+    .cli_action(model_err$missing_specification,
+      action = "abort",
+      call = call
+    )
+  }
+
+  closure <- sub("exogenous", "", closure, ignore.case = TRUE)
+  closure <- sub("rest endogenous", "", closure, ignore.case = TRUE)
+
+  closure <- trimws(closure)
+  closure <- closure[closure != ""]
+  attr(closure, "file") <- closure_file
+  return(closure)
+}

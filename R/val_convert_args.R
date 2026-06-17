@@ -1,0 +1,32 @@
+#' @importFrom rlang arg_match
+#' 
+#' @keywords internal
+#' @noRd
+.validate_convert_args <- function(a,
+                                   call) {
+  if (!is.null(a$target)) {
+    target <- a$target
+    rlang::arg_match(
+      target,
+      c("GTAPv6", "GTAPv7"),
+      error_call = call
+    )
+  }
+
+  checklist <- list(
+    dat_har = "character",
+    par_har = "character",
+    set_har = "character",
+    target = c("NULL", "character")
+  )
+
+  .check_arg_class(
+    args_list = a,
+    checklist = checklist,
+    call = call
+  )
+
+  names(a) <- gsub("_har", "_input", names(a))
+  a <- .data_inputs(a = a, call = call)
+  return(a)
+}
