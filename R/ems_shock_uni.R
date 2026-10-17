@@ -1,19 +1,22 @@
 #' @title Prepare a uniform shock
 #' @export
 #' @description Prepares a uniform shock to be implemented as a
-#'   single percentage-change value uniformly across all or a
-#'   subset of variable tuples.
+#'   single value uniformly across all or a subset of variable
+#'   tuples, in the variable's own form: a percentage change for a
+#'   percent-change variable, an ordinary change for a change
+#'   variable.
 #' @return A `list` object with shock configuration to be passed
 #'   to the `shock` argument of [`ems_deploy()`].
 #' @param var Character of length 1, the variable to be shocked.
-#' @param value Numeric length 1, percentage-change value of the
-#'   shock.
+#' @param value Numeric length 1, value of the shock in the
+#'   variable's own form (percentage or ordinary change).
 #' @param ... Optional named arguments restricting the shock to a
 #'   subset of the variable's elements. Each name must use the
 #'   model-specific set-index format (set name concatenated with
 #'   its index letter, e.g., `REGr`, `COMMc`). Value may consist
-#'   of one or more elements or a subset. When omitted, the shock
-#'   is applied to all variable tuples.
+#'   of one or more elements or a subset. In an intertemporal
+#'   model, `Year = <year>` may stand in for the time set. When
+#'   omitted, the shock is applied to all variable tuples.
 #' @seealso [`ems_deploy()`] for loading the output of this
 #'   function. [`ems_swap()`] for changing the standard model
 #'   closure.
@@ -49,7 +52,7 @@ if (missing(value)) {
 args_list <- mget(names(formals()))
 args_list$subset <- list(...)
 call <- match.call()
-shock <- .implement_shock(
+shock <- .implement_shk(
   args_list = args_list,
   class = "uniform",
   call = call

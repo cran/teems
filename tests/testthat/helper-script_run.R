@@ -1,23 +1,39 @@
-run_script <- function(name, write_dir) {
-  path <- test_path("inst", "scripts", name)
-  
-  if (!file.exists(path)) {
-    path <- test_path("..", "..", "inst", "scripts", name)
+# Source one example script from inst/scripts/<model> in its own
+# environment, with the inputs the scripts expect as free variables, and
+# return the logical checks it defines (`check`, `checks`, `var_check`,
+# `coeff_check`); a non-logical check (an all.equal message) is FALSE.
+run_script <- function(model,
+                       name,
+                       inputs,
+                       model_files,
+                       write_dir,
+                       services = NULL) {
+  path <- system.file("scripts", model, name, package = "teems")
+  if (!nzchar(path)) {
+    stop("Script not found: ", file.path(model, name))
   }
-  
-  if (!file.exists(path)) {
-    path <- system.file("scripts", name, package = "teems")
-  }
-  
-  if (!file.exists(path)) {
-    stop("Script not found: ", name)
-  }
-  
-  title <- tools::file_path_sans_ext(basename(name))
-  tempdir = file.path(write_dir, title)
+
+  tempdir <- file.path(write_dir, tools::file_path_sans_ext(name))
   dir.create(tempdir)
   ems_option_set(tempdir = tempdir)
-  source(path, local = parent.frame())
+
+  env <- new.env(parent = globalenv())
+  env$dat_input <- inputs$dat
+  env$par_input <- inputs$par
+  env$set_input <- inputs$set
+  env$year <- inputs$year
+  env$model_file <- model_files[["model_file"]]
+  env$closure_file <- model_files[["closure_file"]]
+  env$services <- services
+  source(path, local = env)
+
+  checks <- mget(
+    c("check", "checks", "var_check", "coeff_check"),
+    envir = env,
+    ifnotfound = list(NULL)
+  )
+  checks <- Filter(Negate(is.null), checks)
+  unlist(lapply(checks, function(x) if (is.logical(x)) x else FALSE))
 }
 
 nest_temp <- function(name,
@@ -51,4 +67,63 @@ ems_test_dir <- function(write_dir, name) {
     dir.create(test_dir, recursive = TRUE)
   }
   return(test_dir)
+}
+
+# A self-removing run directory under the user cache rather than the R
+# session temporary directory: terminal_run warns about the latter, since
+# R deletes it at exit, and that warning is not what these tests check.
+local_run_dir <- function(env = parent.frame()) {
+  cache <- tools::R_user_dir("teems", "cache")
+  dir.create(cache, recursive = TRUE, showWarnings = FALSE)
+  run_dir <- withr::local_tempdir(tmpdir = cache, .local_envir = env)
+  return(run_dir)
+}
+# Snapshot transform for messages that embed a path or a run-specific
+# name. The user cache root (tools::R_user_dir) made every such snapshot
+# user- and OS-specific: variants keyed by sysname were really keyed by
+# the home directory, so any other user, WSL2 or a fresh laptop
+# regenerated them on every run and the stored Windows/Linux sets could
+# never be diffed cleanly. Scrubbing the root (in the forms R prints it,
+# including the mixed separators R_user_dir yields on Windows) and the
+# per-run solver log name and image tag leaves one platform-independent
+# snapshot set.
+scrub_paths <- function(lines) {
+  cache <- tools::R_user_dir("teems", "cache")
+  forms <- unique(c(
+    cache,
+    normalizePath(cache, winslash = "/", mustWork = FALSE),
+    normalizePath(cache, winslash = "\\", mustWork = FALSE),
+    gsub("/", "\\", cache, fixed = TRUE)
+  ))
+  for (p in forms[nzchar(forms)]) {
+    lines <- gsub(p, "<cache>", lines, fixed = TRUE)
+  }
+  # separators below the scrubbed root: the package builds its paths with
+  # file.path() over R_user_dir() and normalises with an explicit forward
+  # slash, so Windows renders them the same way Linux does, but a message
+  # that reached plain normalizePath() would carry backslashes and differ
+  # for that alone. Only the run of path characters after <cache> is
+  # touched, so nothing else in the message is rewritten.
+  lines <- vapply(
+    lines,
+    function(x) {
+      while (grepl("<cache>[^\\\\\"']*\\\\", x)) {
+        x <- sub("(<cache>[^\\\\\"']*)\\\\", "\\1/", x)
+      }
+      x
+    },
+    character(1),
+    USE.NAMES = FALSE
+  )
+  # the docker --mount value is quoted for the platform's shell (single
+  # quotes under sh, double under cmd); the quoting is not what these
+  # snapshots are about, and leaving it in would make them OS-specific
+  # again, which is exactly what the scrubbing removed
+  lines <- gsub("--mount ['\"](type=bind[^'\"]*)['\"]", "--mount \\1", lines)
+  # Linux hosts run the container as the calling user (--user uid:gid);
+  # Docker Desktop hosts do not, so the flag is dropped here
+  lines <- gsub("--user [0-9]+:[0-9]+ -e HOME=/tmp ", "", lines)
+  lines <- gsub("teems_[0-9]{6}_[0-9]+_[0-9]+(_probe)?", "teems_ID", lines)
+  lines <- gsub("solver_out_[0-9]+(_[0-9]+)*\\.txt", "solver_out_HHMM.txt", lines)
+  gsub("teems:[A-Za-z0-9._-]+ /bin/bash", "teems:TAG /bin/bash", lines)
 }

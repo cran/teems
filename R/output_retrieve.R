@@ -1,12 +1,12 @@
-#' @importFrom purrr pluck
-#' 
 #' @keywords internal
 #' @noRd
 .retrieve_output <- function(var_tbl,
                              var_data,
+                             var_levels = NULL,
+                             cof_tbl = NULL,
+                             cof_data = NULL,
                              type,
                              comp_extract,
-                             paths,
                              sets,
                              time_steps,
                              call) {
@@ -20,6 +20,7 @@
       data_dt = var_data,
       var_extract = comp_extract$variable,
       vars = var_tbl,
+      levels = var_levels,
       sets = sets,
       time_steps = time_steps,
       call = call
@@ -27,15 +28,16 @@
   }
   
   if (compose_coefficient) {
-    output$coefficient <- .compose_coeff(
-      paths = paths$coeff,
+    output$coefficient <- .compose_coeff_bin(
+      data_dt = cof_data,
       coeff_extract = comp_extract$coefficient,
+      cofs = cof_tbl,
       sets = sets,
       time_steps = time_steps,
       call = call
     )
   }
-  
+
   if (type == "all") {
     output <- rbind(output$variable, output$coefficient)
   } else {

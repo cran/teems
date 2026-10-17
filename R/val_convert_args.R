@@ -1,5 +1,4 @@
 #' @importFrom rlang arg_match
-#' 
 #' @keywords internal
 #' @noRd
 .validate_convert_args <- function(a,
@@ -8,7 +7,7 @@
     target <- a$target
     rlang::arg_match(
       target,
-      c("GTAPv6", "GTAPv7"),
+      c("GTAPv6", "GTAPv7", "GTAP-AEZ", "GTAP-E", "GTAP-EP"),
       error_call = call
     )
   }

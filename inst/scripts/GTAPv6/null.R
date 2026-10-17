@@ -24,19 +24,21 @@ cmf_path <- ems_deploy(
 outputs <- ems_solve(
   cmf_path = cmf_path,
   matrix_method = "LU",
-  solution_method = "Johansen"
+  solution_method = "Gragg"
 )
 
 # checks
+# multi-step solutions carry rounding, so values are compared within a tolerance
 check <- all(unlist(lapply(
   outputs[outputs$type == "variable", ]$dat,
   \(d) {
-    all(d$Value == 0)
+    all(abs(d$Value) < 1e-6)
   }
 )))
 
 n_var <- nrow(model[which(model$type == "Variable"), ])
-n_coeff <- nrow(model[which(model$type == "Coefficient"), ])
+# condensation helpers (backsolve product/pivot) are dump-only and not returned
+n_coeff <- nrow(model[which(model$type == "Coefficient" & !grepl("^backsolve (product|pivot)", model$label)), ])
 
 var_check <- isTRUE(all.equal(n_var, nrow(outputs[which(outputs$type == "variable"), ])))
 coeff_check <- isTRUE(all.equal(n_coeff, nrow(outputs[which(outputs$type == "coefficient"), ])))

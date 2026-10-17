@@ -17,10 +17,20 @@ ems_example(
 \item{model}{Character vector of length 1, name of model.
 Options include:
 \itemize{
-\item \code{"GTAP-RE"}: GTAP Rational Expectations
-\item \code{"GTAP-INT"}: GTAP Intertemporal
-\item \code{"GTAPv7"}: Standard GTAP model
-\item \code{"GTAPv6"}: Classic GTAP model
+\item \code{"GTAPv7"}: Standard GTAP model (version 7.1)
+\item \code{"GTAP-RE"}: Intertemporal GTAP with rational expectations:
+forward-looking investment, all periods solved at once
+\item \code{"GTAP-AEZ"}: GTAPv7 with land use by agro-ecological zone,
+land entering production as a CES composite of the zones
+(requires a GTAP-AEZ database)
+\item \code{"GTAP-E"}: GTAPv7 with energy substitution and carbon taxes,
+a capital-energy composite inside value added (requires a
+GTAP-E database)
+\item \code{"GTAP-EP"}: GTAP-E with electricity split into transmission
+and distribution and generation, and generation into
+base-load and peak-load technologies (requires a GTAP-Power
+database)
+\item \code{"GTAPv6"}: Classic GTAP model (version 6.2)
 }}
 
 \item{path}{Character vector of length 1. Directory where
@@ -65,12 +75,20 @@ new users to immediately peruse compatible models or
 generate scripts containing a range of package features.
 }
 \examples{
-# Retrieve GTAP-RE model files
-ems_example("GTAP-RE", tempdir())
+# Retrieve GTAPv7 model files
+ems_example("GTAPv7", tempdir())
 
 \dontrun{
-# The following example requires input data. See
+# The following examples require input data. See
 # https://teemsphere.github.io/ to get started.
+
+# Generate GTAPv7 example scripts
+ems_example(model = "GTAPv7",
+            path = "path/to/example/scripts",
+            type = "scripts",
+            dat_input = "v7_data/gsdfdat.har",
+            par_input = "v7_data/gsdfpar.har",
+            set_input = "v7_data/gsdfset.har")
 
 # Generate GTAP-RE example scripts
 ems_example(model = "GTAP-RE",
@@ -80,18 +98,46 @@ ems_example(model = "GTAP-RE",
             par_input = "v7_data/gsdfpar.har",
             set_input = "v7_data/gsdfset.har")
 
-# Generate GTAPv7 example scripts from a v6.2 format database
-converted <- GTAP_convert(dat_har = "v6_data/gsddat.har",
-                          par_har = "v6_data/gsdpar.har",
-                          set_har = "v6_data/gsdset.har",
-                          target = "GTAPv7")
+# Generate GTAP-AEZ example scripts (a GTAP-AEZ database is
+# required; ems_data() prepares its AEZ layer automatically)
+ems_example(model = "GTAP-AEZ",
+            path = "path/to/example/scripts",
+            type = "scripts",
+            dat_input = "aez_data/gsdfdat.har",
+            par_input = "aez_data/gsdfpar.har",
+            set_input = "aez_data/gsdfset.har")
 
-ems_example(model = "GTAPv7",
+# Generate GTAP-E example scripts (a GTAP-E database is required;
+# ems_data() prepares its energy layer automatically)
+ems_example(model = "GTAP-E",
+            path = "path/to/example/scripts",
+            type = "scripts",
+            dat_input = "e_data/gsdfdat.har",
+            par_input = "e_data/gsdfpar.har",
+            set_input = "e_data/gsdfset.har")
+
+# Generate GTAP-EP example scripts (a GTAP-Power database is
+# required; ems_data() prepares its energy and power layer
+# automatically)
+ems_example(model = "GTAP-EP",
+            path = "path/to/example/scripts",
+            type = "scripts",
+            dat_input = "power_data/gsdfdat.har",
+            par_input = "power_data/gsdfpar.har",
+            set_input = "power_data/gsdfset.har")
+
+# Generate GTAPv6 example scripts from a v7 format database
+converted <- GTAP_convert(dat_har = "v7_data/gsdfdat.har",
+                          par_har = "v7_data/gsdfpar.har",
+                          set_har = "v7_data/gsdfset.har",
+                          target = "GTAPv6")
+
+ems_example(model = "GTAPv6",
             path = "path/to/example/scripts",
             type = "scripts",
             dat_input = converted$dat,
             par_input = converted$par,
-            set_input = converted$set)           
+            set_input = converted$set)
 }
 }
 \seealso{

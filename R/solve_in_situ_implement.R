@@ -1,43 +1,25 @@
 #' @keywords internal
 #' @noRd
-.implement_solve_in_situ <- function(model_dir,
-                                     model_file,
-                                     closure_file,
-                                     input_files,
-                                     shock_file,
-                                     solution_method,
-                                     matrix_method,
-                                     n_subintervals,
-                                     steps,
-                                     n_tasks,
-                                     laA,
-                                     laD,
-                                     laDi,
-                                     suppress_outputs,
-                                     terminal_run,
-                                     append_args,
+.implement_solve_in_situ <- function(args_list,
                                      call) {
-  cmf_path <- .in_situ_cmf(
-    input_files = input_files,
-    model_file = model_file,
-    closure_file = closure_file,
-    shock_file = shock_file,
-    model_dir = model_dir,
+  v <- .validate_in_situ_args(
+    a = args_list,
     call = call
   )
-  
-  return(ems_solve(
-    cmf_path = cmf_path,
-    solution_method = solution_method,
-    matrix_method = matrix_method,
-    n_subintervals = n_subintervals,
-    steps = steps,
-    n_tasks = n_tasks,
-    laA = laA,
-    laD = laD,
-    laDi = laDi,
-    suppress_outputs = suppress_outputs,
-    terminal_run = terminal_run,
-    append_args = append_args
+  cmf_path <- .in_situ_cmf(
+    input_files = v$input_files,
+    model_file = v$model_file,
+    closure_file = v$closure_file,
+    shock_file = v$shock_file,
+    model_dir = v$model_dir,
+    ignore_condense = v$ignore_condense,
+    call = call
+  )
+  solve_args <- v[setdiff(names(formals(ems_solve)), c("cmf_path", "..."))]
+  sol <- do.call(ems_solve, c(
+    list(cmf_path = cmf_path),
+    solve_args,
+    v$solver_args
   ))
+  return(sol)
 }

@@ -109,6 +109,27 @@ test_that("ems_uniform_shock errors when full var shock is applied to not fully 
   expect_snapshot_error(ems_deploy(dat, model, invalid_shk))
 })
 
+test_that("a full shock is accepted when the variable is exogenous across several closure entries (R4-B5)", {
+  nest_temp("uni_full_split_entries", write_dir)
+  cmf <- ems_deploy(
+    dat, model,
+    shock = ems_uniform_shock("qfd", 1),
+    swap_in = list(ems_swap("qfd", REGr = "chn"), ems_swap("qfd", REGr = "row"), ems_swap("qfd", REGr = "usa")),
+    swap_out = "tfd"
+  )
+  lines <- readLines(list.files(dirname(cmf), pattern = "\\.shf$", full.names = TRUE))
+  expect_length(grep("^Shock qfd", lines), 1L)
+})
+
+test_that("a redeploy with another shock leaves a single shock file (R4-B1)", {
+  nest_temp("uni_redeploy_other", write_dir)
+  first <- ems_deploy(dat, model, ems_uniform_shock("pop", 1, REGr = "row"))
+  second <- ems_deploy(dat, model, ems_uniform_shock("aoall", 1, REGr = "row"))
+  shf <- list.files(dirname(second), pattern = "\\.shf$")
+  expect_length(shf, 1L)
+  expect_false(grepl("[0-9]{4}\\.shf$", shf))
+})
+
 test_that("ems_uniform_shock errors when part var shock is applied to fully endogenous variable", {
   invalid_shk <- ems_uniform_shock("qfd", 1, REGr = "row")
   nest_temp("uni_x_full_exo_part", write_dir)
@@ -133,31 +154,61 @@ test_that("ems_uniform_shock errors when endogenous components are allocated sho
   expect_snapshot_error(ems_deploy(dat, model, endo_ele))
 })
 
+test_that("overlapping shocks on one variable abort", {
+  all_years <- ems_uniform_shock("pop", 1, REGr = "row")
+  one_year <- ems_uniform_shock("pop", 2, REGr = "row", Year = 2023)
+  nest_temp("uni_repeat_shock", write_dir)
+  expect_snapshot_error(ems_deploy(dat, model, shock = list(all_years, one_year)))
+})
+
+test_that("a multi-element uniform shock repeating an element aborts", {
+  dup_ele <- ems_uniform_shock("pop", 1, REGr = c("row", "row"))
+  nest_temp("uni_repeat_multi", write_dir)
+  expect_snapshot_error(ems_deploy(dat, model, shock = list(dup_ele)))
+})
+
+test_that("disjoint shocks on one variable deploy once per component", {
+  shf <- function(shk, name) {
+    nest_temp(name, write_dir)
+    cmf <- ems_deploy(dat, model, shock = shk)
+    readLines(list.files(dirname(cmf), pattern = "\\.shf$", full.names = TRUE))
+  }
+  split <- shf(list(
+    ems_uniform_shock("pop", 1, REGr = "row"),
+    ems_uniform_shock("pop", 1, REGr = "usa")
+  ), "uni_disjoint_split")
+  multi <- shf(list(ems_uniform_shock("pop", 1, REGr = c("row", "usa"))), "uni_disjoint_multi")
+  expect_identical(multi, split)
+  expect_length(grep("^Shock pop", split), 2L)
+})
+
+test_that("redeploying a shock into the same directory rewrites the shock file", {
+  nest_temp("uni_redeploy", write_dir)
+  shk <- ems_uniform_shock("pop", 1, REGr = "row")
+  first <- ems_deploy(dat, model, shk)
+  second <- ems_deploy(dat, model, shk)
+  lines <- readLines(list.files(dirname(second), pattern = "\\.shf$", full.names = TRUE))
+  expect_length(grep("^Shock pop", lines), 1L)
+})
+
 test_that("ems_uniform_shock errors dots passed without names", {
   expect_snapshot_error(ems_uniform_shock("qe", 1, "capital", ALLTIMEt = 1))
 })
 
-test_that("ems_uniform examples work", {
-  # Full uniform: 2% shock imposed on all afeall tuples
-  expect_type(ems_uniform_shock(var = "afeall", value = 2), "list")
-
-  # Partial uniform by element: applied only to the "chn"
-  # element in set REGr (REG). Note that set designations must
-  # consist of the concatenation of the standard set (e.g., REG)
-  # and variable-specific index (e.g., r).
-  expect_type(ems_uniform_shock(var = "afeall",
-                    REGr = "chn",
-                    value = 2), "list")
-
-  # tested in GTAP-RE/part_uniform_subset_swap.R
-  
-  # Partially uniform by subset and element: applied to "chn"
-  # and "usa" across the MARG and FWDTIME subsets.
-  expect_type(ems_uniform_shock(var = "qxs",
-                    COMMc = "MARG",
-                    REGs = c("chn", "usa"),
-                    ALLTIMEt = "FWDTIME",
-                    value = -1), "list")
+test_that("uniform shock set, index and element names match case-insensitively", {
+  shf <- function(shk, name) {
+    nest_temp(name, write_dir)
+    cmf <- ems_deploy(dat, model, shk)
+    readLines(list.files(dirname(cmf), pattern = "\\.shf$", full.names = TRUE))
+  }
+  canon <- shf(ems_uniform_shock("pop", 1, REGr = "row", Year = 2023), "uni_case_canon")
+  mixed <- shf(ems_uniform_shock("POP", 1, regr = "ROW", year = 2023), "uni_case_mixed")
+  expect_identical(mixed, canon)
 })
 
-unlink(tools::R_user_dir("teems", "cache"), recursive = TRUE)
+unlink(write_dir, recursive = TRUE)
+test_that("a uniform shock value must be a single finite number", {
+  expect_snapshot_error(ems_uniform_shock("pop", NA_real_))
+  expect_snapshot_error(ems_uniform_shock("pop", c(1, 2)))
+  expect_snapshot_error(ems_uniform_shock("pop", Inf))
+})

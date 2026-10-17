@@ -104,8 +104,9 @@ cmf_path <- ems_deploy(
 # run the Docker-based solver and parse results
 outputs <- ems_solve(
   cmf_path = cmf_path,
-  matrix_method = "LU",
-  solution_method = "Johansen"
+  matrix_method = "SBBD",
+  n_tasks = 2L,
+  solution_method = "Gragg"
 )
 
 # checks

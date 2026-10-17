@@ -1,8 +1,7 @@
-#' @importFrom data.table data.table fsetdiff funion fintersect
-#' @importFrom purrr pmap map map_lgl pluck map2
+#' @importFrom data.table data.table
+#' @importFrom purrr pmap map map_lgl map2 compact map_chr
 #' @importFrom stats na.omit
 #' @importFrom tibble tibble
-#' 
 #' @keywords internal
 #' @noRd
 .finalize_sets <- function(sets,
@@ -12,10 +11,14 @@
                            reference_year,
                            call,
                            data_call,
-                           model_call) {
+                           model_call,
+                           coeff_data = list(),
+                           model = NULL,
+                           set_raw = NULL) {
   
-  if (!all(stats::na.omit(set_extract$header) %in% names(sets))) {
-    m_map <- setdiff(stats::na.omit(set_extract$header), names(sets))
+  if (!all(toupper(stats::na.omit(set_extract$header)) %in% toupper(names(sets)))) {
+    m_map <- stats::na.omit(set_extract$header)
+    m_map <- m_map[!toupper(m_map) %in% toupper(names(sets))]
    .cli_action(deploy_err$missing_mapping,
                action = "abort",
                call = data_call) 
@@ -48,96 +51,102 @@
     attr(set_extract, "time_steps") <- time_steps
     attr(set_extract, "CYRS") <- CYRS
     n_timestep_coeff <- coeff_extract$name[match(.o_n_timestep_header(), coeff_extract$header)]
-    set_extract$mapping <- purrr::map2(
-      set_extract$qualifier_list,
-      set_extract$definition,
-      function(q, d) {
+    set_extract$mapping <- purrr::pmap(
+      list(
+        set_extract$qualifier_list,
+        set_extract$definition,
+        set_extract$name
+      ),
+      \(q, d, nm) {
         if (q %=% "(non_intertemporal)") {
           NULL
         } else {
           .convert_int_sets(
             expr = d,
             n_timestep = length(time_steps),
-            n_timestep_coeff = n_timestep_coeff
+            n_timestep_coeff = n_timestep_coeff,
+            set_name = nm,
+            call = model_call
           )
         }
       }
     )
 
-    r_idx <- match(set_extract$header, names(sets))
+    r_idx <- match(toupper(set_extract$header), toupper(names(sets)))
     set_extract$mapping <- ifelse(!is.na(r_idx),
                                   sets[r_idx],
                                   set_extract$mapping)
   } else {
-    r_idx <- match(set_extract$header, names(sets))
+    r_idx <- match(toupper(set_extract$header), toupper(names(sets)))
     set_extract$mapping <- sets[r_idx]
   }
-  # check for correct sets
   names(set_extract$mapping) <- set_extract$name
-  set_op_pattern <- paste0("UNION|\\+|\\-|\\INTERSECT")
+  set_op_pattern <- 'union|intersect|[=+^&*()"\\\\-]|\\s[xX]\\s'
   set_extract$mapping <- purrr::map2(
     set_extract$definition,
     set_extract$mapping,
-    function(d, m) {
+    \(d, m) {
       if (is.null(m) && !isTRUE(grepl(set_op_pattern, d, ignore.case = TRUE))) {
         m <- data.table::data.table(
           origin = d,
-          mapping = d,
-          key = c("origin", "mapping")
+          mapping = d
         )
       }
       return(m)
     }
   )
 
-  safety_count <- 0
-  exit_loop <- nrow(set_extract) - 2
-  while (any(purrr::map_lgl(set_extract$mapping, is.null))) {
-    safety_count <- safety_count + 1
-    if (safety_count > exit_loop) {
-      null_sets <- names(set_extract$mapping)[purrr::map_lgl(set_extract$mapping, is.null)]
-      .cli_action(deploy_err$while_loop,
-        action = "abort",
-        call = call
-      )
-    }
+  unresolved <- which(purrr::map_lgl(set_extract$mapping, is.null))
+  while (length(unresolved) > 0L) {
 
     set_extract$mapping <- purrr::pmap(
       list(
         set_extract$mapping,
         set_extract$definition,
-        set_extract$comp1,
-        set_extract$comp2
+        set_extract$name
       ),
-      function(m, d, c1, c2) {
-        if (is.null(m)) {
-          x <- purrr::pluck(set_extract[set_extract$name %in% c1, "mapping"], 1, 1)
-          y <- purrr::pluck(set_extract[set_extract$name %in% c2, "mapping"], 1, 1)
-          if (any(is.null(x), is.null(y))) {
-            return(NULL)
-          } else if (grepl("\\+", d)) {
-            if (nrow(data.table::fintersect(x, y)) %!=% 0L) {
-              .cli_action(deploy_err$invalid_plus,
-                          action = "abort",
-                          call = model_call)
-            }
-            m <- data.table::funion(x, y)
-          } else if (grepl("\\-", d)) {
-            m <- data.table::fsetdiff(x, y, all = TRUE)
-          } else if (grepl("union", d, ignore.case = TRUE)) {
-            m <- data.table::funion(x, y)
-          } else if (grepl("intersect", d, ignore.case = TRUE)) {
-            m <- data.table::fintersect(x, y)
-          }
+      \(m, d, nm) {
+        if (is.null(m) && .is_set_builder(d)) {
+          m <- .eval_set_builder(
+            b = .parse_set_builder(d),
+            owner = nm,
+            mappings = set_extract$mapping,
+            coeff_data = coeff_data,
+            coeff_extract = coeff_extract,
+            call = data_call,
+            model = model,
+            set_raw = set_raw
+          )
+        } else if (is.null(m)) {
+          m <- .eval_set_expr(
+            d = d,
+            mappings = set_extract$mapping,
+            owner = nm,
+            call = model_call
+          )
         }
         return(m)
       }
     )
+    still <- which(purrr::map_lgl(set_extract$mapping, is.null))
+    if (length(still) == length(unresolved)) {
+      null_sets <- names(set_extract$mapping)[still]
+      .cli_action(deploy_err$while_loop,
+        action = "abort",
+        call = call
+      )
+    }
+    unresolved <- still
   }
-  
-  set_extract$ele <- purrr::map(set_extract$mapping, function(s) {
+
+  set_extract$ele <- purrr::map(set_extract$mapping, \(s) {
     unique(s$mapping)
   })
+  sb_data <- purrr::compact(purrr::map(set_extract$mapping, attr, "sb_indicator"))
+  if (length(sb_data) > 0L) {
+    names(sb_data) <- purrr::map_chr(sb_data, \(d) class(d)[[1]])
+    attr(set_extract, "sb_data") <- sb_data
+  }
 
   attr(set_extract, "intertemporal") <- intertemporal
   return(set_extract)

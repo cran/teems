@@ -4,7 +4,13 @@
 \alias{ems_model}
 \title{Parse and modify model and closure files}
 \usage{
-ems_model(model_file, closure_file, var_omit = NULL, ...)
+ems_model(
+  model_file,
+  closure_file,
+  backsolve = NULL,
+  ignore_condense = FALSE,
+  ...
+)
 }
 \arguments{
 \item{model_file}{Character vector length 1, path to a TABLO
@@ -17,9 +23,25 @@ closure file with .cls extension. See
 \href{https://github.com/teemsphere/teems-models}{teems-models}
 for closure file formatting.}
 
-\item{var_omit}{Character vector of variable length (default
-is \code{NULL}), variable names to substitute with \code{0} in the
-model and remove from the closure.}
+\item{backsolve}{Character vector of variable length (default
+is \code{NULL}), variable names to substitute out of the system
+by backsolving. Unnamed entries resolve their defining
+equation by the \verb{E_<variable>} convention; use named entries
+for exceptions (e.g., \code{c(qgd = "E_qgdtot")}). Backsolved
+variables must be endogenous; their values remain available
+in solve outputs. Each nomination is checked to make sure
+its equation can be solved for the variable (see GEMPACK
+manual 14.1.10); a nomination that fails aborts with the
+reason.}
+
+\item{ignore_condense}{Logical length 1 (default is \code{FALSE}).
+If \code{TRUE}, in-TAB \code{Substitute}, \code{Backsolve} and \code{Omit}
+statements are ignored. Otherwise \code{Substitute} statements
+are executed as backsolves and \code{Omit} statements make the
+omitted variables exogenous where the closure does not
+already. The solver automatically drops unshocked exogenous
+variables from the solve, and their zero results remain in
+the outputs.}
 
 \item{...}{A named pairlist assigning values to model
 coefficients. Name must match a coefficient declared in the
@@ -48,13 +70,15 @@ aggregations specified in \code{\link[=ems_data]{ems_data()}} and all tuples mus
 be present.
 }
 \examples{
-# Simple static model retrieval and load
+# Retrieve the static and the intertemporal example models
 GTAPv7 <- ems_example("GTAPv7", tempdir())
-ems_model(GTAPv7[["model_file"]], GTAPv7[["closure_file"]])
-
-# Retrieve intertemporal model
 GTAP_RE <- ems_example("GTAP-RE", tempdir())
 \donttest{
+# Simple static model without condensation
+ems_model(GTAPv7[["model_file"]],
+          GTAPv7[["closure_file"]],
+          ignore_condense = TRUE)
+
 # Construct data frame
 sectors <- c("crops", "food", "livestock", "mnfcs", "svces")
 regions <- c("usa", "chn", "row")
@@ -66,18 +90,17 @@ SUBPAR <- expand.grid(COMMc = sectors,
 SUBPAR$Value <- runif(nrow(SUBPAR))
 
 # Model load with:
-# 1) variable omission
-# 2) uniform numeric value applied to KAPPA coefficient
-# 3) heterogeneous values allocated to SUBPAR via data frame
+# 1) uniform numeric value applied to KAPPA coefficient
+# 2) heterogeneous values allocated to SUBPAR via data frame
 
 ems_model(model_file = GTAP_RE[["model_file"]],
           closure_file = GTAP_RE[["closure_file"]],
-          var_omit = c("atall", "avaall", "tfe", "tfm", "tgd", "tgm", "tid", "tim"),
           KAPPA = 0.03,
           SUBPAR = SUBPAR)
 }
 }
 \seealso{
-\code{\link[=ems_example]{ems_example()}} for writing teems example models and scripts to file. \code{\link[=ems_deploy]{ems_deploy()}} for loading the output of this
-function as well as conducting closure swaps.
+\code{\link[=ems_example]{ems_example()}} for writing teems example models
+and scripts to file. \code{\link[=ems_deploy]{ems_deploy()}} for loading the output
+of this function as well as conducting closure swaps.
 }

@@ -34,6 +34,7 @@
                                   sets,
                                   call) {
   swap <- ems_swap(swap)[[1]]
+  swap$var <- .levels_linear_alias(swap$var, var_extract)
   if (!swap$var %in% var_extract$name) {
     var_name <- swap$var
     .cli_action(swap_err$no_var[[1]],
@@ -41,7 +42,14 @@
       call = call
     )
   }
-  
+
+  .abort_cndnsd(
+    var_name = swap$var,
+    var_extract = var_extract,
+    err = swap_err$condensed_var,
+    call = call
+  )
+
   attr(swap$var, "call") <- call
   return(swap$var)
 }
@@ -55,6 +63,7 @@
                              sets,
                              call) {
   call <- attr(swap, "call")
+  swap$var <- .levels_linear_alias(swap$var, var_extract)
   if (!swap$var %in% var_extract$name) {
     var_name <- swap$var
     .cli_action(swap_err$no_var,
@@ -62,7 +71,14 @@
       call = call
     )
   }
-  
+
+  .abort_cndnsd(
+    var_name = swap$var,
+    var_extract = var_extract,
+    err = swap_err$condensed_var,
+    call = call
+  )
+
   attr(swap$var, "call") <- call
   return(swap$var)
 }
@@ -77,6 +93,7 @@
                                 sets,
                                 call) {
   call <- attr(swap, "call")
+  swap$var <- .levels_linear_alias(swap$var, var_extract)
 
   if (!swap$var %in% var_extract$name) {
     var_name <- swap$var
@@ -86,7 +103,16 @@
     )
   }
 
+  .abort_cndnsd(
+    var_name = swap$var,
+    var_extract = var_extract,
+    err = swap_err$condensed_var,
+    call = call
+  )
+
   ls_mixed <- purrr::pluck(var_extract, "ls_mixed_idx", swap$var)
+  ls_upper <- purrr::pluck(var_extract, "ls_upper_idx", swap$var)
+  names(swap$subset) <- .canonical_mixed(names(swap$subset), ls_mixed)
 
   if (!all(names(swap$subset) %in% ls_mixed)) {
     non_exist_set <- setdiff(names(swap$subset), ls_mixed)
@@ -102,17 +128,21 @@
     comp <- swap$subset[[i]]
     nm <- names(swap$subset)[[i]]
 
-    valid_ele <- with(sets$ele, get(.dock_tail(nm)))
-    valid_subsets <- with(sets$subsets, get(.dock_tail(nm)))
+    nm_set <- .mixed_set(nm, ls_mixed, ls_upper)
+    valid_ele <- with(sets$ele, get(nm_set))
+    valid_subsets <- with(sets$subsets, get(nm_set))
+    valid_subsets <- valid_subsets[!grepl("^IFS[0-9]+$", valid_subsets)]
 
-    if (all(is.na(valid_subsets))) {
+    if (length(valid_subsets) == 0L || all(is.na(valid_subsets))) {
       vs_check <- character(0)
       valid_subsets <- "*none*"
     } else {
       vs_check <- valid_subsets
     }
 
-    if (!comp %in% c(valid_ele, vs_check)) {
+    comp <- .canonical_ele(comp, valid_ele, vs_check)
+
+    if (!all(comp %in% c(valid_ele, vs_check))) {
       invalid_comp <- setdiff(comp, c(valid_ele, vs_check))
       .cli_action(swap_err$invalid_comp,
         action = c("abort", rep("inform", 3)),
@@ -120,16 +150,15 @@
       )
     }
 
-    if (comp %in% valid_ele) {
+    if (all(comp %in% valid_ele)) {
       attr(comp, "type") <- "ele"
-    } else if (comp %in% valid_subsets) {
+    } else if (all(comp %in% valid_subsets)) {
       attr(comp, "type") <- "subset"
     }
 
     swap$subset[[i]] <- comp
   }
 
-  ls_upper <- purrr::pluck(var_extract, "ls_upper_idx", swap$var)
   m_mixed <- setdiff(ls_mixed, names(swap$subset))
   ls_missing_sets <- as.list(m_mixed)
   names(ls_missing_sets) <- m_mixed
@@ -142,7 +171,7 @@
       swap$subset,
       ls_upper
     ),
-    function(nm, c, u) {
+    \(nm, c, u) {
       if (nm %=% c) {
         u
       } else if (attr(c, "type") %=% "ele") {

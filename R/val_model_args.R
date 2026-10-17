@@ -16,17 +16,26 @@
   checklist <- list(
     model_file = "character",
     closure_file = "character",
-    var_omit = c("NULL", "character"),
+    backsolve = c("NULL", "character"),
+    ignore_condense = "logical",
     mod_coeff = c("logical", "list")
   )
-  
+
   .check_arg_class(
     args_list = a,
     checklist = checklist,
     call = call
   )
-  
-  a$var_omit <- tolower(a$var_omit)
+
+  for (nme in "ignore_condense") {
+    if (length(a[[nme]]) != 1L || is.na(a[[nme]])) {
+      bad_arg <- nme
+      .cli_action(gen_err$logical_flag,
+        action = "abort",
+        call = call
+      )
+    }
+  }
 
   a$model_file <- .check_input(
     file = a$model_file,

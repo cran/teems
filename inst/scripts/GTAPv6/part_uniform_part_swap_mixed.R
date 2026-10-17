@@ -19,7 +19,7 @@ partial <- ems_uniform_shock(
   var = "qfd",
   REGs = "usa",
   PROD_COMMj = "crops",
-  value = -1
+  value = -0.1
 )
 
 # define a uniform shock across all yp elements
@@ -55,14 +55,15 @@ cmf_path <- ems_deploy(
 outputs <- ems_solve(
   cmf_path = cmf_path,
   matrix_method = "LU",
-  solution_method = "Johansen"
+  solution_method = "Gragg"
 )
 
 # checks
-exo_shk1 <- outputs$dat$qfd[REGs == "usa" & PROD_COMMj == "crops"]$Value == -1
+# multi-step solutions carry rounding, so values are compared within a tolerance
+exo_shk1 <- abs(outputs$dat$qfd[REGs == "usa" & PROD_COMMj == "crops"]$Value + 0.1) < 1e-6
 endo1 <- outputs$dat$qfd[!(REGs == "usa" & PROD_COMMj == "crops")]$Value != 0
 endo2 <- outputs$dat$tfd[REGr == "usa" & PROD_COMMj == "crops"]$Value != 0
-exo_null <- outputs$dat$tfd[!(REGr == "usa" & PROD_COMMj == "crops")]$Value == 0
+exo_null <- abs(outputs$dat$tfd[!(REGr == "usa" & PROD_COMMj == "crops")]$Value) < 1e-6
 endo3 <- outputs$dat$dppriv$Value != 0
 exo_shk2 <- abs(outputs$dat$yp$Value - 0.1) < .Machine$double.eps^0.5
 qfd_len_check <- (length(exo_shk1) + length(endo1)) == nrow(outputs$dat$qfd)

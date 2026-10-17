@@ -1,5 +1,4 @@
 #' @importFrom cli cli_verbatim
-#' 
 #' @keywords internal
 #' @noRd
 .implement_model <- function(args_list,
@@ -12,7 +11,9 @@
 
   model <- .process_tablo(
     tab_file = v$model_file,
-    var_omit = v$var_omit,
+    backsolve = v$backsolve,
+    ignore_condense = v$ignore_condense,
+    extra_statements = attr(v$closure, "xsets"),
     call = call
   )
 
@@ -28,9 +29,13 @@
     )
   }
 
-  closure <- .check_closure(
+  closure <- .closure_add_omitted(
     closure = v$closure,
-    var_omit = v$var_omit,
+    omit_vars = attr(model, "omit_vars")
+  )
+
+  closure <- .check_closure(
+    closure = closure,
     var_extract = model[model$type == "Variable", ],
     call = call
   )

@@ -103,8 +103,12 @@
                              write_dir,
                              ...) {
   write_path <- file.path(write_dir, attr(input, "file"))
+  stale <- list.files(write_dir, pattern = "\\.shf$", full.names = TRUE)
+  if (length(stale) > 0L) {
+    file.remove(stale)
+  }
   for (shk in input) {
-    .write_shock(
+    .write_shk(
       shock = shk,
       write_path = write_path
     )

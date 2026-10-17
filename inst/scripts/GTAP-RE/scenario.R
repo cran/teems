@@ -78,7 +78,8 @@ cmf_path <- ems_deploy(
 outputs <- ems_solve(
   cmf_path = cmf_path,
   matrix_method = "SBBD",
-  solution_method = "mod_midpoint"
+  n_tasks = 2L,
+  solution_method = "Gragg"
 )
 
 # checks

@@ -1,5 +1,4 @@
 #' @importFrom rlang current_env
-#'
 #' @keywords internal
 #' @noRd
 .inform_metadata <- function(metadata) {
@@ -12,10 +11,10 @@
       action = rep("inform", 3)
     )
   }
+  return(invisible(NULL))
 }
 
 #' @importFrom utils packageVersion
-#' 
 #' @noRd
 #' @keywords internal
 .check_database_version <- function(vetted,
@@ -28,4 +27,5 @@
                 call = call
     )
   }
+  return(invisible(NULL))
 }

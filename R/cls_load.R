@@ -7,8 +7,15 @@
   closure <- readLines(closure_file)
   closure_file <- basename(closure_file)
 
+  closure <- strsplit(.strip_strong_comments(paste(closure, collapse = "\n"), call = call), "\n", fixed = TRUE)[[1]]
+
   closure <- gsub(";", "", closure)
-  closure <- closure[closure != ""]
+  closure <- gsub("![^!]*!", "", closure)
+  closure <- closure[trimws(closure) != ""]
+
+  xsets <- grepl("^\\s*x(set|subset)\\b", closure, ignore.case = TRUE)
+  xset_statements <- sub("^\\s*x", "", closure[xsets], ignore.case = TRUE)
+  closure <- closure[!xsets]
 
   if (!any(grepl("exogenous", closure[[1]], ignore.case = TRUE)) ||
     !any(grepl("rest endogenous", closure[[length(closure)]], ignore.case = TRUE))) {
@@ -23,6 +30,8 @@
 
   closure <- trimws(closure)
   closure <- closure[closure != ""]
+  closure <- gsub('"([^"]*)"', '"\\L\\1"', closure, perl = TRUE)
   attr(closure, "file") <- closure_file
+  attr(closure, "xsets") <- xset_statements
   return(closure)
 }

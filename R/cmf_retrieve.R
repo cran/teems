@@ -14,7 +14,12 @@
                     docker_path,
                     fixed = TRUE)
   
-  file_name <- strsplit(file_entry, " ")[[1]][2]
+  quoted <- regmatches(file_entry, regexpr('"[^"]*"', file_entry))
+  file_name <- if (length(quoted) > 0L) {
+    quoted[[1]]
+  } else {
+    strsplit(file_entry, " ")[[1]][2]
+  }
   file_name <- gsub(
     pattern = "\"|;",
     replacement = "",

@@ -120,7 +120,8 @@
 
   class(MAKB) <- c("MAKB", "dat", "GTAPv7", class(MAKB))
   class(MAKS) <- c("MAKS", "dat", "GTAPv7", class(MAKS))
-  return(list(MAKB, MAKS))
+  headers <- list(MAKB, MAKS)
+  return(headers)
 }
 
 #' @method .GTAPv7_header ESBI

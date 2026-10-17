@@ -9,7 +9,6 @@
 }
 
 #' @importFrom purrr pluck
-#' 
 #' @keywords internal
 #' @noRd
 #' @export
@@ -19,12 +18,21 @@
                                     database_version,
                                     call,
                                     available_mappings,
+                                    map_layers = NULL,
+                                    set_data = NULL,
                                     ...) {
-  
-  available_mappings <- purrr::pluck(mappings, database_version, data_format)
-  map_name <- attr(set_map, "name")
 
-  if (!map_name %in% names(available_mappings)) {
+  map_name <- attr(set_map, "name")
+  available_mappings <- NULL
+  for (bucket in c(map_layers, data_format)) {
+    candidate <- purrr::pluck(mappings, database_version, bucket)
+    if (map_name %in% names(candidate)) {
+      available_mappings <- candidate
+      break
+    }
+  }
+
+  if (is.null(available_mappings)) {
     .cli_action(
       data_err$no_internal_mapping,
       action = "abort",
@@ -43,13 +51,58 @@
 
   available_mappings <- available_mappings[[map_name]]
   set_mapping <- available_mappings[, c(1, which(names(available_mappings) == set_map)), with = FALSE]
+  matched_data <- .match_set_data(set_data, map_name)
+  if (length(matched_data) > 0L) {
+    .check_map_coverage(
+      set_mapping = set_mapping,
+      data_ele = matched_data[[1]],
+      map_name = map_name,
+      call = call
+    )
+  }
   class(set_mapping) <- c("internal", class(set_mapping))
   return(set_mapping)
 }
 
-#' @importFrom data.table fread is.data.table as.data.table copy fsetequal
-#' @importFrom purrr pluck map_lgl
-#' 
+#' @importFrom purrr map_lgl
+#' @keywords internal
+#' @noRd
+.match_set_data <- function(set_data,
+                            map_name) {
+  hit <- purrr::map_lgl(set_data, \(s) {
+    if (inherits(s, map_name)) {
+      return(TRUE)
+    }
+    fmt <- if (inherits(s, "GTAPv7")) {
+      "GTAPv7"
+    } else {
+      "GTAPv6"
+    }
+    id <- match(class(s)[1], set_conversion[[paste0(fmt, "header")]])
+    !is.na(id) && identical(set_conversion[[paste0(fmt, "name")]][id], map_name)
+  })
+  return(set_data[hit])
+}
+
+#' @keywords internal
+#' @noRd
+.check_map_coverage <- function(set_mapping,
+                                data_ele,
+                                map_name,
+                                call) {
+  supplied_ele <- tolower(set_mapping[[1]])
+  data_ele <- unique(tolower(as.character(data_ele)))
+  if (!all(data_ele %in% supplied_ele)) {
+    missing_ele <- setdiff(data_ele, supplied_ele)
+    .cli_action(data_err$missing_ele_mapping,
+      action = "abort",
+      call = call
+    )
+  }
+  return(invisible(NULL))
+}
+
+#' @importFrom data.table fread is.data.table as.data.table copy
 #' @keywords internal
 #' @noRd
 #' @export
@@ -89,31 +142,31 @@
     set_mapping <- set_mapping[, c(1,2)]
   }
   
-  matched_data <- set_data[purrr::map_lgl(set_data, inherits, map_name)]
+  matched_data <- .match_set_data(set_data, map_name)
   
   if (length(matched_data) %=% 0L) {
     .cli_action(data_err$missing_data,
                 action = "abort",
                 call = call)
-  } else {
-    supplied_ele <- purrr::pluck(set_mapping, 1)
-    if (!all(matched_data[[map_name]] %in% supplied_ele)) {
-      missing_ele <- setdiff(matched_data[[map_name]], supplied_ele)
-      .cli_action(data_err$missing_ele_mapping,
-                  action = "abort",
-                  call = call
-      )
-    }
   }
-  
-  orig_mapping <- data.table::copy(set_mapping)
-  set_mapping[, names(set_mapping) := lapply(.SD, tolower)]
-  
-  if (!data.table::fsetequal(set_mapping, orig_mapping)) {
-    .cli_action(data_wrn$mapping_case,
-                action = "warn",
-                call = call)
+
+  set_mapping[, names(set_mapping) := lapply(.SD, .fold_elements)]
+  origin <- set_mapping[[1]]
+  destination <- set_mapping[[2]]
+  dup_ele <- unique(origin[duplicated(origin)])
+  dup_ele <- dup_ele[vapply(dup_ele, \(o) length(unique(destination[origin == o])) > 1L, logical(1))]
+  if (length(dup_ele) > 0L) {
+    .cli_action(data_err$dup_origin,
+      action = "abort",
+      call = call
+    )
   }
+  .check_map_coverage(
+    set_mapping = set_mapping,
+    data_ele = matched_data[[1]],
+    map_name = map_name,
+    call = call
+  )
 
   if (colnames(set_mapping[,c(1,2)]) %!=% c(map_name, "mapping")) {
     colnames(set_mapping)[c(1,2)] <- c(map_name, "mapping")

@@ -1,0 +1,86 @@
+#' @importFrom rlang is_integerish
+#' @keywords internal
+#' @noRd
+.validate_solver_steps <- function(a,
+                                   paths,
+                                   call) {
+  is_rk <- .solver_is_rk(a$solution_method)
+  is_rk_embedded <- .solver_is_rk_embedded(a$solution_method)
+  if (is_rk) {
+    if (!isTRUE(all(
+      is.numeric(a$steps), length(a$steps) == 1, !anyNA(a$steps),
+      rlang::is_integerish(a$steps), a$steps >= 1
+    ))) {
+      solution_method <- a$solution_method
+      .cli_action(solve_err$step_single_rk,
+        action = c("abort", "inform"),
+        call = call
+      )
+    }
+    if (a$adaptive %!=% "no" && !is_rk_embedded) {
+      adaptive <- a$adaptive
+      .cli_action(solve_err$adaptive_method,
+        action = c("abort", "inform"),
+        call = call
+      )
+    }
+    if (a$n_subintervals != 1) {
+      n_comp_active <- .deploy_metadata(cmf_path = paths$cmf)$n_comp_active %|||% 0
+      if (n_comp_active == 0 || isFALSE(a$complementarity$do_acc_run)) {
+        solution_method <- a$solution_method
+        .cli_action(solve_err$rk_subintervals,
+          action = c("abort", "inform"),
+          call = call
+        )
+      }
+    }
+    if (!is.null(a$rk_h0) && a$rk_h0 > 1 / a$steps) {
+      h_init <- a$rk_h0
+      steps <- a$steps
+      .cli_action(solve_err$h_init_steps,
+        action = c("abort", "inform"),
+        call = call
+      )
+    }
+    if (!all(is.numeric(a$eps_tolerance), length(a$eps_tolerance) == 1, a$eps_tolerance > 0)) {
+      .cli_action(solve_err$epstol_range,
+        action = "abort",
+        call = call
+      )
+    }
+  } else {
+    if (a$adaptive %!=% "no") {
+      adaptive <- a$adaptive
+      .cli_action(solve_err$adaptive_method,
+        action = c("abort", "inform"),
+        call = call
+      )
+    }
+    if (!isTRUE(all(
+      is.numeric(a$steps), length(a$steps) %in% c(1L, 2L, 3L), !anyNA(a$steps),
+      rlang::is_integerish(a$steps), a$steps >= 1
+    ))) {
+      .cli_action(solve_err$step_length,
+        action = c("abort", "inform"),
+        call = call
+      )
+    }
+    if (length(a$steps) >= 2L) {
+      if (a$solution_method %in% c("Gragg", "Midpoint") && length(unique(a$steps %% 2)) != 1L) {
+        solution_method <- a$solution_method
+        .cli_action(solve_err$step_parity,
+          action = c("abort", "inform"),
+          call = call
+        )
+      }
+      if (a$solution_method %in% c("Gragg", "Midpoint", "Euler") && !all(diff(a$steps) > 0)) {
+        solution_method <- a$solution_method
+        .cli_action(solve_err$step_increasing,
+          action = c("abort", "inform"),
+          call = call
+        )
+      }
+    }
+  }
+  return(invisible(NULL))
+}

@@ -1,13 +1,13 @@
 #' @importFrom purrr map_lgl
 #' @importFrom tools file_path_sans_ext
-#'
 #' @keywords internal
 #' @noRd
 .in_situ_cmf <- function(input_files,
                          model_file,
                          model_dir,
-                         shock_file,
-                         closure_file,
+                         shock_file = NULL,
+                         closure_file = NULL,
+                         ignore_condense = FALSE,
                          call) {
   input_files <- .check_named_dots(input_files)
 
@@ -32,17 +32,38 @@
     call = call
   )
 
-  shock_file <- .check_input(
-    file = shock_file,
-    valid_ext = "shf",
-    call = call
-  )
+  if (!is.null(shock_file)) {
+    shock_file <- .check_input(
+      file = shock_file,
+      valid_ext = "shf",
+      call = call
+    )
+  }
 
-  closure_file <- .check_input(
-    file = closure_file,
-    valid_ext = "cls",
-    call = call
-  )
+  if (!is.null(closure_file)) {
+    closure_file <- .check_input(
+      file = closure_file,
+      valid_ext = "cls",
+      call = call
+    )
+  }
+
+  if (!all(purrr::map_lgl(input_files, file.exists))) {
+    nonexist_files <- input_files[!purrr::map_lgl(input_files, file.exists)]
+    .cli_action(solve_err$insitu_no_file,
+      action = "abort",
+      call = call
+    )
+  }
+
+  file_names <- basename(c(unlist(input_files), model_file, closure_file, shock_file))
+  if (anyDuplicated(file_names)) {
+    dup_names <- unique(file_names[duplicated(file_names)])
+    .cli_action(solve_err$insitu_dup_name,
+      action = "abort",
+      call = call
+    )
+  }
 
   cmf <- .cmf_core(
     input_files = input_files,
@@ -54,6 +75,7 @@
 
   model <- .process_tablo(
     tab_file = model_file,
+    ignore_condense = ignore_condense,
     quiet = TRUE,
     call = call
   )
@@ -68,14 +90,6 @@
     )
   }
 
-  if (!all(purrr::map_lgl(input_files, file.exists))) {
-    nonexist_files <- input_files[!purrr::map_lgl(input_files, file.exists)]
-    .cli_action(solve_err$insitu_no_file,
-      action = "abort",
-      call = call
-    )
-  }
-
   tab <- .finalize_tab(model = model)
   .ems_write(
     input = tab,
@@ -83,7 +97,8 @@
   )
   cmf_writeout <- .writeout(
     model = model,
-    write_dir = model_dir
+    write_dir = model_dir,
+    coeff = FALSE
   )
   cmf <- c(cmf, cmf_writeout)
 

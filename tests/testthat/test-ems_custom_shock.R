@@ -123,6 +123,77 @@ test_that("ems_custom_shock errors when some shock tuples are endogenous", {
   expect_snapshot_error(ems_deploy(dat, model, invalid_tup))
 })
 
+test_that("ems_custom_shock errors on duplicated tuples", {
+  dup_tup <- data.frame(REGr = c("row", "row", "usa"), ALLTIMEt = c(0, 0, 0), Value = c(1, 2, 1))
+  dup_tup <- ems_custom_shock("pop", dup_tup)
+  nest_temp("cust_dup_tup", write_dir)
+  expect_snapshot_error(ems_deploy(dat, model, dup_tup))
+})
+
+test_that("custom and uniform shocks sharing a component abort", {
+  cst <- ems_custom_shock("pop", data.frame(REGr = "row", ALLTIMEt = 0:2, Value = 2))
+  uni <- ems_uniform_shock("pop", 1, REGr = "row", ALLTIMEt = 1)
+  nest_temp("cust_repeat_shock", write_dir)
+  expect_snapshot_error(ems_deploy(dat, model, shock = list(cst, uni)))
+})
+
+test_that("a custom shock on a scalar variable points to ems_uniform_shock (R4-B8)", {
+  static_files <- ems_example("GTAPv7", file.path(write_dir, "tmp"))
+  static_dat <- ems_data(dat_input, par_input, set_input, REG = "big3", ACTS = "macro_sector", ENDW = "labor_agg")
+  static_model <- ems_model(static_files[["model_file"]], static_files[["closure_file"]])
+  scalar <- ems_custom_shock("pfactwld", data.frame(Value = 2))
+  nest_temp("cust_scalar", write_dir)
+  expect_snapshot_error(ems_deploy(static_dat, static_model, scalar))
+})
+
+test_that("a full custom shock on a partly swapped-out variable names the shock call (R4-B6)", {
+  full <- ems_custom_shock("pop", expand.grid(REGr = c("chn", "usa", "row"), ALLTIMEt = 0:2, Value = 1, stringsAsFactors = FALSE))
+  nest_temp("cust_full_swapped", write_dir)
+  expect_snapshot_error(ems_deploy(
+    dat, model, full,
+    swap_in = ems_swap("qgdp", REGr = "usa"),
+    swap_out = ems_swap("pop", REGr = "usa")
+  ))
+})
+
+test_that("ems_custom_shock errors when the variable is fully endogenous", {
+  endo <- ems_custom_shock("qgdp", data.frame(REGr = "row", ALLTIMEt = 0, Value = 1))
+  nest_temp("cust_x_full_exo_part", write_dir)
+  expect_snapshot_error(ems_deploy(dat, model, endo))
+})
+
+test_that("custom shock column names match the declared set and index case-insensitively", {
+  shf <- function(shk, name) {
+    nest_temp(name, write_dir)
+    cmf <- ems_deploy(dat, model, shk)
+    readLines(list.files(dirname(cmf), pattern = "\\.shf$", full.names = TRUE))
+  }
+  canon <- shf(ems_custom_shock("pop", data.frame(REGr = "row", ALLTIMEt = 0:2, Value = 2)), "cust_case_canon")
+  mixed <- shf(ems_custom_shock("POP", data.frame(regR = "ROW", alltimet = 0:2, Value = 2)), "cust_case_mixed")
+  expect_identical(mixed, canon)
+})
+
+test_that("factor columns in a custom shock follow the set order, not the level order", {
+  shf <- function(shk, name) {
+    nest_temp(name, write_dir)
+    cmf <- ems_deploy(dat, model, shk)
+    readLines(list.files(dirname(cmf), pattern = "\\.shf$", full.names = TRUE))
+  }
+  chr <- expand.grid(
+    ACTSa = c("svces", "mnfcs", "livestock", "food", "crops"),
+    ALLTIMEt = 2:0,
+    REGr = "usa",
+    stringsAsFactors = FALSE
+  )
+  chr$Value <- seq_len(nrow(chr))
+  fac <- chr
+  fac$ACTSa <- factor(fac$ACTSa, levels = unique(fac$ACTSa))
+  fac$REGr <- factor(toupper(fac$REGr))
+  canon <- shf(ems_custom_shock("aoall", chr), "cust_factor_chr")
+  expect_identical(shf(ems_custom_shock("aoall", fac), "cust_factor"), canon)
+  expect_true(any(grepl("^15 14 13 12 11$", canon)))
+})
+
 test_that("ems_custom_shock example runs", {
   model <- "GTAP-RE"
   model_files <- ems_example(model, write_dir)
@@ -195,4 +266,13 @@ test_that("ems_custom_shock example runs", {
   expect_all_true(c(check1, check2))
 })
 
-unlink(tools::R_user_dir("teems", "cache"), recursive = TRUE)
+unlink(write_dir, recursive = TRUE)
+test_that("custom shock values must be finite numbers", {
+  bad <- df_input
+  bad$Value[1] <- NA
+  expect_snapshot_error(ems_custom_shock("aoall", bad))
+  text <- df_input
+  text$Value <- as.character(text$Value)
+  text$Value[2] <- "n/a"
+  expect_snapshot_error(ems_custom_shock("aoall", text))
+})

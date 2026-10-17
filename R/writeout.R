@@ -1,3 +1,4 @@
+#' @importFrom purrr map_chr
 #' @keywords internal
 #' @noRd
 .writeout <- function(model,
@@ -28,7 +29,8 @@
   }
 
   if (coeff) {
-    coeff_names <- model[model$type == "Coefficient", "name"][[1]]
+    coeff_names <- model[model$type == "Coefficient" &
+      !grepl("^backsolve (product|pivot)", model$label %|||% NA_character_), "name"][[1]]
     coeff_writeout <- paste(
       "outdata",
       paste0('"', coeff_names, '"'),
@@ -44,7 +46,7 @@
         ";"
       )
     )
-    
+
     .out_mkdir(write_dir = write_dir,
                sets = FALSE,
                var = FALSE)
@@ -61,7 +63,7 @@
     writeout <- coeff_writeout
   }
   
-  writeout <- purrr::map_chr(writeout, function(c) {
+  writeout <- purrr::map_chr(writeout, \(c) {
     gsub(write_dir, "/opt/teems", c, fixed = TRUE)
   })
 

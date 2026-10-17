@@ -1,3 +1,7 @@
+# a variable listed twice in the closure is exogenous once; overlapping entries name the tuples (R4-B4)
+
+    x 3 tuples for "pop" in the pre-swap closure with multiple entries: usa,0, usa,1, and usa,2.
+
 # ems_deploy errors when .data is missing
 
     x argument `.data` is missing, with no default
@@ -18,6 +22,10 @@
 
     x No additional shocks are accepted if a shock file is provided.
 
+# write_coefficients must be a logical scalar
+
+    x `write_coefficients` must be logical of length 1.
+
 # ems_deploy errors when read-in headers not present in data
 
     x Read-in headers missing from loaded data: "SAVE".
@@ -37,6 +45,11 @@
 # ems_deploy errors when set-calculated number of entries does not match a finalized data header
 
     x ESBT has 45 entries; 30 expected.
+
+# an unlabelled header is dimensioned from its reading coefficient
+
+    x Header "MEXP" carries no set labels and its 6 values (shape 3 x 2) do not fit coefficient MEXP, declared over COM (3) x EXP2 (3).
+    i An unlabelled header is read positionally against the declared sets of the coefficient that reads it; label the header's dimensions or correct the declaration.
 
 # ems_deploy errors when aggregated inputs are incomplete
 

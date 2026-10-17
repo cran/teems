@@ -2,13 +2,13 @@
 
     x argument `dat_input` is missing, with no default
 
-# ems_data requires par_input argument
+# single-file route needs both or neither of par_input and set_input
 
-    x argument `par_input` is missing, with no default
+    x `par_input` and `set_input` must be given together or both left `NULL` (single-file route).
 
-# ems_data requires set_input argument
+# single-file route rejects set mappings
 
-    x argument `set_input` is missing, with no default
+    x Set mappings cannot be applied on the single-file route (`par_input` and `set_input` absent); the file is loaded at full resolution.
 
 # ems_data requires REG argument
 
@@ -20,11 +20,11 @@
 
 # ems_data rejects non-character par_input
 
-    x `par_input` must be a character or list, not a number.
+    x `par_input` must be a NULL, character, or list, not a number.
 
 # ems_data rejects non-character set_input
 
-    x `set_input` must be a character or list, not a number.
+    x `set_input` must be a NULL, character, or list, not a number.
 
 # ems_data rejects non-character REG
 
@@ -46,6 +46,10 @@
 # ems_data rejects invalid mapping values in CSV
 
     x The REG mapping has no entries for "afg".
+
+# ems_data rejects a data element its mapping does not cover
+
+    x The ENDW mapping has no entries for "natres".
 
 # ems_data warns CSV with extra columns
 
@@ -74,4 +78,22 @@
 # ems_data errors when dots passed without names
 
     x Set mappings must be passed as named pairs: `REG = "mapping"`
+
+# ems_data rejects a par_weights method it does not know
+
+    x `par_weights` methods are "share" and "value", not "mean".
+
+# ems_data rejects more than one default par_weights method
+
+    x `par_weights` takes at most one unnamed method, the default for every weighted parameter; "share" and "value" were given.
+    i Name the others after the parameters they apply to, e.g. `c("value", ESBM = "share")`.
+
+# ems_data rejects a par_weights parameter the format does not weight
+
+    x `par_weights` names "ESBX", which "GTAPv7" data does not weight.
+    i Weighted parameters: "ESBD", "ESBM", "ESDC", "ESMC", "ESBT", "ESBV", "INCP", "SUBP", "ESBC", "ESBG", "ESBI", "ETRQ", "ESBQ", "EFVE", and "EAEZ".
+
+# ems_data rejects a mapping that sends one element to two aggregates
+
+    x The REG mapping sends "usa" to more than one destination.
 

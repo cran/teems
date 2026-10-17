@@ -34,9 +34,8 @@ dat <- ems_data(
   time_steps = time_steps
 )
 
-model <- ems_model(model_file, closure_file)
+model <- ems_model(model_file, closure_file, ignore_condense = TRUE)
 
-variant <- Sys.info()["sysname"]
 
 test_that("solve_in_situ solves", {
   REG <- c("chn", "usa", "row")
@@ -121,7 +120,8 @@ test_that("solve_in_situ solves", {
     model_dir = insitu_dir,
     closure_file = model_files[["closure_file"]],
     shock_file = shock_file,
-    solution_method = "mod_midpoint",
+    ignore_condense = TRUE,
+    solution_method = "Gragg",
     matrix_method = "SBBD",
     n_subintervals = 1,
     n_tasks = 1
@@ -168,7 +168,7 @@ test_that("solve_in_situ errors when model directory doesn't exist", {
   GTAPSETS <- file.path(insitu_dir, "GTAPSETS.txt")
   shock_file <- list.files(insitu_dir, pattern = "shf", full.names = TRUE)
 
-  expect_snapshot_error(solve_in_situ(
+  expect_snapshot(solve_in_situ(
     GTAPDATA = GTAPDATA,
     GTAPINT = GTAPINT,
     GTAPSETS = GTAPSETS,
@@ -176,12 +176,12 @@ test_that("solve_in_situ errors when model directory doesn't exist", {
     closure_file = model_files[["closure_file"]],
     model_dir = file.path(insitu_dir, "no_dir"),
     shock_file = shock_file,
-    solution_method = "mod_midpoint",
+    solution_method = "Gragg",
     matrix_method = "SBBD",
     n_subintervals = 1,
     n_tasks = 1
   ),
-  variant = variant)
+  error = TRUE, transform = scrub_paths)
 })
 
 test_that("solve_in_situ errors when missing input file", {
@@ -204,7 +204,7 @@ test_that("solve_in_situ errors when missing input file", {
     closure_file = model_files[["closure_file"]],
     model_dir = insitu_dir,
     shock_file = shock_file,
-    solution_method = "mod_midpoint",
+    solution_method = "Gragg",
     matrix_method = "SBBD",
     n_subintervals = 1,
     n_tasks = 1
@@ -233,10 +233,116 @@ test_that("solve_in_situ errors when input file is without name", {
     closure_file = model_files[["closure_file"]],
     model_dir = insitu_dir,
     shock_file = shock_file,
-    solution_method = "mod_midpoint",
+    solution_method = "Gragg",
     matrix_method = "SBBD",
     n_subintervals = 1,
     n_tasks = 1
+  ))
+})
+
+test_that("solve_in_situ errors when an input file does not exist", {
+  pop <- ems_uniform_shock("pop", 1)
+  subdir <- "absent_file"
+  nest_temp(subdir, write_dir)
+  cmf_path <- ems_deploy(dat, model)
+
+  insitu_dir <- normalizePath(file.path(write_dir, subdir), "/", FALSE)
+  GTAPDATA <- file.path(insitu_dir, "GTAPDATA.txt")
+  GTAPINT <- file.path(insitu_dir, "GTAPINT.txt")
+  GTAPSETS <- file.path(insitu_dir, "GTAPSETS.txt")
+  shock_file <- list.files(insitu_dir, pattern = "shf", full.names = TRUE)
+
+  expect_no_warning(expect_snapshot_error(solve_in_situ(
+    GTAPDATA = GTAPDATA,
+    GTAPINT = GTAPINT,
+    GTAPPARM = "not_a_file.txt",
+    GTAPSETS = GTAPSETS,
+    model_file = model_files[["model_file"]],
+    closure_file = model_files[["closure_file"]],
+    model_dir = insitu_dir,
+    shock_file = shock_file
+  )))
+})
+
+test_that("solve_in_situ errors when two input files share a file name", {
+  subdir <- "dup_name"
+  nest_temp(subdir, write_dir)
+  insitu_dir <- normalizePath(file.path(write_dir, subdir), "/", FALSE)
+  src_a <- file.path(insitu_dir, "a")
+  src_b <- file.path(insitu_dir, "b")
+  dir.create(src_a)
+  dir.create(src_b)
+  writeLines("A", file.path(src_a, "GTAPDATA.txt"))
+  writeLines("B", file.path(src_b, "GTAPDATA.txt"))
+  writeLines("Shock ;", file.path(src_a, "null.shf"))
+  expect_snapshot_error(solve_in_situ(
+    GTAPDATA = file.path(src_a, "GTAPDATA.txt"),
+    GTAPPARM = file.path(src_b, "GTAPDATA.txt"),
+    model_file = model_files[["model_file"]],
+    closure_file = model_files[["closure_file"]],
+    shock_file = file.path(src_a, "null.shf"),
+    model_dir = insitu_dir
+  ))
+})
+
+test_that("the in-situ CMF copies refreshed inputs over the previous copies", {
+  subdir <- "stale_copy"
+  nest_temp(subdir, write_dir)
+  insitu_dir <- normalizePath(file.path(write_dir, subdir), "/", FALSE)
+  src_a <- file.path(insitu_dir, "a")
+  src_b <- file.path(insitu_dir, "b")
+  dir.create(src_a)
+  dir.create(src_b)
+  writeLines("VERSION A", file.path(src_a, "GTAPDATA.txt"))
+  writeLines("VERSION B", file.path(src_b, "GTAPDATA.txt"))
+  writeLines("VERSION A", file.path(src_a, "null.shf"))
+  writeLines("VERSION B", file.path(src_b, "null.shf"))
+  for (src in c(src_a, src_b)) {
+    .cmf_core(
+      input_files = list(GTAPDATA = file.path(src, "GTAPDATA.txt")),
+      model_file = model_files[["model_file"]],
+      shock_file = file.path(src, "null.shf"),
+      model_dir = insitu_dir
+    )
+  }
+  expect_identical(readLines(file.path(insitu_dir, "GTAPDATA.txt")), "VERSION B")
+  expect_identical(readLines(file.path(insitu_dir, "null.shf")), "VERSION B")
+
+  writeLines("IN PLACE", file.path(insitu_dir, "GTAPSETS.txt"))
+  .cmf_core(
+    input_files = list(GTAPSETS = file.path(insitu_dir, "GTAPSETS.txt")),
+    model_file = model_files[["model_file"]],
+    model_dir = insitu_dir
+  )
+  expect_identical(readLines(file.path(insitu_dir, "GTAPSETS.txt")), "IN PLACE")
+})
+
+test_that("solve_in_situ mirrors the ems_solve signature", {
+  solve_formals <- setdiff(names(formals(ems_solve)), c("cmf_path", "..."))
+  own <- c("...", "model_dir", "model_file", "closure_file", "shock_file", "ignore_condense", "solver_args")
+  expect_setequal(setdiff(names(formals(solve_in_situ)), own), solve_formals)
+  for (nm in solve_formals) {
+    expect_identical(formals(solve_in_situ)[[nm]], formals(ems_solve)[[nm]], label = nm)
+  }
+})
+
+test_that("solve_in_situ errors when no input files are given", {
+  expect_snapshot_error(solve_in_situ(
+    model_file = model_files[["model_file"]],
+    closure_file = model_files[["closure_file"]],
+    model_dir = write_dir,
+    shock_file = "shock.shf"
+  ))
+})
+
+test_that("solve_in_situ errors when ignore_condense is not a single TRUE or FALSE", {
+  expect_snapshot_error(solve_in_situ(
+    GTAPDATA = "GTAPDATA.txt",
+    model_file = model_files[["model_file"]],
+    closure_file = model_files[["closure_file"]],
+    model_dir = write_dir,
+    shock_file = "shock.shf",
+    ignore_condense = NA
   ))
 })
 
@@ -261,10 +367,11 @@ test_that("solve_in_situ example works", {
    model_dir = insitu_dir,
    model_file = model_files[["model_file"]],
    closure_file = model_files[["closure_file"]],
-   shock_file = shock_file
+   shock_file = shock_file,
+   ignore_condense = TRUE
    )
   
   expect_s3_class(output, "tbl_df")
 })
 
-unlink(tools::R_user_dir("teems", "cache"), recursive = TRUE)
+unlink(write_dir, recursive = TRUE)

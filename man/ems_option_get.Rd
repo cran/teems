@@ -11,28 +11,49 @@ ems_option_get(name = NULL)
 value. One of:
 \itemize{
 \item \code{NULL} Returns all option values.
-\item \code{"verbose"} Logical. If \code{FALSE}, function-specific
-diagnostics are silenced.
 \item \code{"tempdir"} Character. Directory used for temporary
 file storage during a model run.
-\item \code{"ndigits"} Integer. Exact number of digits to the
-right of the decimal point written to file for numeric
-type double.
-\item \code{"accuracy_threshold"} Numeric. Threshold
-(converted to a percentage) against which 4-digit
-precision is compared.
+\item \code{"verbose"} Logical. If \code{FALSE}, function-specific
+diagnostics are silenced.
+\item \code{"ndigits"} Integer. Number of digits to the right of
+the decimal point written to file for numeric type double
+(at least \code{ndigits} significant digits for small values).
+\item \code{"accuracy_threshold"} Numeric. Share of results that must
+be accurate to at least \code{accuracy_figures} figures.
+\item \code{"accuracy_figures"} Integer. Significant figures a result
+must reach to count as accurate (the default is \code{4}).
+\item \code{"accuracy_criterion"} Character. \code{"solution"} (the
+default), \code{"data"} or \code{"both"}: the accuracy summary judged.
+\item \code{"required_figures"} Integer or \code{NULL} (the default). Figures
+for the convergence code \code{XRA}.
+\item \code{"full_exclude"} Character vector. Headers to
+fully exclude from all aspects of the model run.
 \item \code{"check_shock_status"} Logical. If \code{FALSE}, no
 check on shock element endogenous/exogenous status is
 conducted.
-\item \code{"timestep_header"} Character. Coefficient
-containing a numeric vector of timestep intervals.
-\item \code{"n_timestep_header"} Character. Coefficient
-containing a numeric vector length one with sum of
-timestep intervals.
-\item \code{"full_exclude"} Character vector. Headers to
-fully exclude from all aspects of the model run.
-\item \code{"docker_tag"} Character. Docker tag specifying
-which Docker image to use.
+\item \code{"timestep_header"} Character. Header written with the
+time of each period (\code{time_steps} of \code{\link[=ems_data]{ems_data()}}).
+\item \code{"n_timestep_header"} Character. Header written with the
+number of periods.
+\item \code{"docker_tag"} Character. Tag of the \code{teems} Docker image
+to use. \code{"latest"} when unset.
+\item \code{"assertions"} Character. \code{"fatal"} (the default), \code{"warn"}
+or \code{"off"}: severity of TAB \code{Assertion} failures in
+\code{\link[=ems_solve]{ems_solve()}}.
+\item \code{"range_test_initial"} Character. \code{"fatal"} (the default),
+\code{"warn"} or \code{"off"}: severity of declared-range violations on
+initial values.
+\item \code{"range_test_updated"} Character. \code{"warn"} (the default),
+\code{"fatal"} or \code{"off"}: as \code{"range_test_initial"}, for updated
+values.
+\item \code{"random_seed"} Integer. Seed of \code{RANDOM(a,b)} (the default
+is \code{1}).
+\item \code{"refine"} Logical. \code{TRUE} (the default): one refinement
+step per \code{"DBBD"} solve (see
+\code{\link[=ems_option_set]{ems_option_set()}}).
+\item \code{"converge"} Logical. \code{FALSE} (the default); \code{TRUE}
+applies GEMPACK's treatment of poorly converging results (see
+\code{\link[=ems_option_set]{ems_option_set()}}).
 }}
 }
 \value{

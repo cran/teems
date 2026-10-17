@@ -12,7 +12,7 @@
 
 # ems_uniform_shock errors when value is not numeric
 
-    x `input` must be a numeric, not a string.
+    x `value` must be a numeric, not a string.
 
 # ems_uniform_shock errors when variable is not present in the model file
 
@@ -35,7 +35,7 @@
 # ems_uniform_shock errors when full var shock is applied to not fully exogenous variable
 
     x qe is not fully exogenous; full shocks require full exogeneity.
-    i If fully exogenous with multiple closure entries, consolidate into a single "qe" entry.
+    i Shock only its exogenous components, or swap the endogenous ones in with `ems_swap()`.
     i Call: `ems_uniform_shock(var = "qe", value = 1)`
 
 # ems_uniform_shock errors when part var shock is applied to fully endogenous variable
@@ -60,9 +60,36 @@
     x Shock allocated to non-exogenous tuples: 1: capital chn 1, 2: capital row 1, and 3: capital usa 1.
     i Call: `ems_uniform_shock(var = "qe", value = 1, ENDWMSe = "capital", ` and ` ALLTIMEt = 1)`
 
+# overlapping shocks on one variable abort
+
+    x 2 shocks on pop overlap; a component is shocked more than once: (row,0).
+    i A component may be shocked only once; the solver does not let a later shock override an earlier one.
+    i Split the shocks so their components are disjoint, or combine them into a single `ems_custom_shock()`.
+
+# a multi-element uniform shock repeating an element aborts
+
+    x 2 shocks on pop overlap; components are shocked more than once: (row,0), (row,1), and (row,2).
+    i A component may be shocked only once; the solver does not let a later shock override an earlier one.
+    i Split the shocks so their components are disjoint, or combine them into a single `ems_custom_shock()`.
+
 # ems_uniform_shock errors dots passed without names
 
     x Subset arguments in `...` must be named pairs: `SETi = "component"`.
     i Note that set names consist of the concatenation of the set name and variable-specific lowercase index.
     i Call: `ems_uniform_shock(var = "qe", value = 1, "capital", ALLTIMEt = 1)`
+
+# a uniform shock value must be a single finite number
+
+    x `value` must be a single finite number, not NA.
+    x Call: `ems_uniform_shock(var = "pop", value = NA_real_)`
+
+---
+
+    x `value` must be a single finite number, not 1 and 2.
+    x Call: `ems_uniform_shock(var = "pop", value = c(1, 2))`
+
+---
+
+    x `value` must be a single finite number, not Inf.
+    x Call: `ems_uniform_shock(var = "pop", value = Inf)`
 

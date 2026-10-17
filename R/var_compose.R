@@ -1,12 +1,12 @@
 #' @importFrom purrr map map2
 #' @importFrom data.table data.table CJ setnames setkeyv
-#' @importFrom tibble tibble add_column
-#' 
+#' @importFrom tibble tibble add_column add_row
 #' @keywords internal
 #' @noRd
 .compose_var <- function(data_dt,
                          var_extract,
                          vars,
+                         levels = NULL,
                          sets,
                          time_steps,
                          call) {
@@ -16,7 +16,7 @@
   vars$column_id <- purrr::map2(
     vars$setid,
     vars$size,
-    function(x, y) {
+    \(x, y) {
       if (y != 0) {
         dim <- x[1:y]
       } else {
@@ -31,13 +31,13 @@
     sets = sets
   )
 
-  vars$set <- purrr::map(vars$column_id, function(c_id) {
+  vars$set <- purrr::map(vars$column_id, \(c_id) {
     c_idx <- match(c_id, sets$id)
     set_col <- sets$sets[c_idx]
     return(set_col)
   })
 
-  vars$dt <- lapply(vars$set, function(ele) {
+  vars$dt <- lapply(vars$set, \(ele) {
     if (is.null(unlist(ele))) {
       data.table::data.table(null_set = NA)
     } else {
@@ -56,15 +56,59 @@
     )
   }
 
-  data.table::setnames(data_dt, new = c("r_idx", "Value"))
+  data.table::setnames(data_dt, old = 1:2, new = c("r_idx", "Value"))
 
-  # bring in variable names by matrix size
-  data_dt$var <- rep(vars$cofname, vars$matsize)
+  vars$start <- c(0L, cumsum(vars$matsize))[seq_len(nrow(vars))]
 
-  data_dt <- purrr::map(vars$cofname, function(nm) {
+  declared <- vars$cofname %in% tolower(var_extract$name)
+  derived <- grepl("@", vars$cofname, fixed = TRUE) & !declared
+  drop <- derived & (grepl("@d$", vars$cofname) | vars$cofname == "del_comp@")
+  if (any(drop)) {
+    vars <- vars[!drop, ]
+    derived <- derived[!drop]
+  }
+  if (any(derived)) {
+    for (nm in vars$cofname[derived]) {
+      dt_cols <- colnames(vars$dt[[nm]])
+      scalar <- identical(dt_cols, "null_set")
+      var_extract <- tibble::add_row(
+        var_extract,
+        name = nm,
+        label = paste0(
+          "derived complementarity ",
+          switch(substring(nm, nchar(nm), nchar(nm)),
+            e = "expression",
+            l = "variable minus lower bound",
+            u = "variable minus upper bound",
+            "variable"
+          )
+        ),
+        ls_upper_idx = list(if (scalar) {
+          NA_character_
+        } else {
+          dt_cols
+        }),
+        ls_mixed_idx = list(if (scalar) {
+          NA_character_
+        } else {
+          dt_cols
+        })
+      )
+    }
+    ve_idx <- match(vars$cofname, tolower(var_extract$name))
+    if (!anyNA(ve_idx)) {
+      var_extract <- var_extract[ve_idx, ]
+    }
+  }
+
+  data_dt <- purrr::map(vars$cofname, \(nm) {
+    k <- match(nm, vars$cofname)
     sets <- vars$dt[[nm]]
-    dt_data <- data_dt[data_dt$var == nm, ]
-    dt <- cbind(sets, dt_data[, -c("r_idx", "var")])
+    dt_data <- data_dt[vars$start[k] + seq_len(vars$matsize[k]), ]
+    dt <- cbind(sets, dt_data[, -"r_idx"])
+    if (!is.null(levels[[nm]])) {
+      dt <- .add_levels(dt, levels[[nm]])
+    }
     return(dt)
   })
 
@@ -75,11 +119,12 @@
     var_extract$ls_upper_idx
   )
 
+  value_cols <- c("Value", "error_estimate", "pass1", "pass2", "pass3", "error", "figures", "levels_figures", "code", "summarized", "pre_level", "post_level", "change", "percent_change")
   lax_check <- all(unlist(purrr::map2(
     var_extract$ls_upper_idx,
     purrr::map(data_dt, colnames),
-    function(check, parsed) {
-      all(is.element(tolower(check), tolower(parsed[parsed != "Value"])))
+    \(check, parsed) {
+      all(is.element(tolower(check), tolower(parsed[!parsed %in% value_cols])))
     }
   )))
   if (!lax_check) {
@@ -93,8 +138,8 @@
   strict_check <- all(unlist(purrr::map2(
     var_extract$ls_upper_idx,
     purrr::map(data_dt, colnames),
-    function(check, parsed) {
-      all(tolower(check) == tolower(parsed[parsed != "Value"]))
+    \(check, parsed) {
+      all(tolower(check) == tolower(parsed[!parsed %in% value_cols]))
     }
   )))
   if (!strict_check) {
@@ -115,9 +160,10 @@
   purrr::map2(
     data_dt,
     var_extract$ls_mixed_idx,
-    function(dt, mixed_col) {
+    \(dt, mixed_col) {
       if (mixed_col %!=% NA_character_) {
-        data.table::setnames(dt, new = c(mixed_col, "Value"))
+        new_names <- c(mixed_col, colnames(dt)[colnames(dt) %in% value_cols])
+        data.table::setnames(dt, new = new_names)
         data.table::setkeyv(dt, cols = mixed_col)
       } else {
         dt[, let(null_set = NULL)]

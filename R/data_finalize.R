@@ -1,7 +1,5 @@
-#' @importFrom rlang is_integerish
 #' @importFrom data.table data.table setnames setkeyv setattr is.data.table
 #' @importFrom purrr map2 map_chr map_lgl map_int pluck
-#'
 #' @keywords internal
 #' @noRd
 .finalize_data <- function(.data,
@@ -9,10 +7,9 @@
                            model,
                            call,
                            model_call) {
-  # NSE
   Value <- NULL
 
-  model_coeff <- model[model$type == "Coefficient" & !is.na(model$file), "header"][[1]]
+  model_coeff <- model[model$type %in% c("Coefficient", "Variable") & !is.na(model$file), "header"][[1]]
   .data <- .data[names(.data) %in% model_coeff]
 
   if (attr(sets, "intertemporal")) {
@@ -22,7 +19,7 @@
     .data <- purrr::map2(
       .data,
       l_idx,
-      function(dt, id) {
+      \(dt, id) {
         full_sets <- model$ls_upper_idx[[id]]
         if (any(duplicated(full_sets))) {
           full_sets[duplicated(full_sets)] <- attr(dt, "sorted")[which(duplicated(full_sets))]
@@ -53,7 +50,7 @@
     data.table::setnames(timesteps, c(t_header_set, "Value"))
     data.table::setkeyv(timesteps, cols = t_header_set)
     append <- list(n_timestep, timesteps)
-    names(append) <- purrr::map_chr(append, function(c) {
+    names(append) <- purrr::map_chr(append, \(c) {
       class(c)[[1]]
     })
     .data <- c(.data, append)
@@ -67,16 +64,25 @@
       call = model_call
     )
 
-    names(.data) <- purrr::map_chr(.data, function(d) {
+    names(.data) <- purrr::map_chr(.data, \(d) {
       class(d)[[1]]
     })
   }
 
-  .data <- lapply(.data, function(dt) {
+  .data <- lapply(.data, \(dt) {
+    if (!is.null(attr(dt, "positional_dim"))) {
+      dt <- .dimension_positional(
+        dt = dt,
+        model = model,
+        set_ele = sets$ele,
+        call = call
+      )
+    }
     if (colnames(dt) %!=% "Value") {
       dt_col <- gsub("\\.[0-9]+", "", colnames(dt))
       dt_sets <- with(sets$ele, mget(dt_col[!dt_col %in% "Value"]))
       expected <- as.integer(prod(lengths(dt_sets)))
+      .order_by_sets(dt, dt_sets)
       data.table::setattr(dt, "dim_sizes", lengths(dt_sets))
       data.table::setattr(dt, "dimen", paste(lengths(dt_sets), collapse = " "))
     } else {
@@ -100,19 +106,15 @@
   .data <- purrr::map2(
     .data,
     r_idx,
-    function(dt, id) {
+    \(dt, id) {
       data.table::setattr(dt, "file", model$file[id])
-      if (!grepl("integer", model$qualifier_list[id])) {
+      if (!isTRUE(grepl("integer", model$qualifier_list[id]))) {
         type <- "Real"
       } else {
         type <- "Integer"
       }
 
-      if (type %=% "Real" && !rlang::is_integerish(dt$Value)) {
-        dt[, let(Value = round(Value, ndigits))]
-      } else {
-        dt[, let(Value = as.integer(Value))]
-      }
+      dt[, let(Value = .typed_values(Value, type, ndigits))]
 
       lead <- paste(
         attr(dt, "dimen"),
@@ -134,7 +136,7 @@
   sets <- purrr::map2(
     sets,
     r_idx,
-    function(s, id) {
+    \(s, id) {
       lead <- paste(
         length(s),
         "Strings Length",

@@ -1,6 +1,5 @@
 #' @importFrom purrr map2
 #' @importFrom utils tail head
-#' 
 #' @keywords internal
 #' @noRd
 .check_sets <- function(sets,
@@ -15,7 +14,7 @@
   )
 
   if (length(set_path) > 0) {
-    tab_sets <- lapply(set_path, function(s) {
+    tab_sets <- lapply(set_path, \(s) {
       utils::tail(utils::head(readLines(s), -1), -1)
     })
     names(tab_sets) <- gsub("\\.csv", "", basename(set_path))
@@ -40,9 +39,10 @@
     sets$ele <- purrr::map2(
       sets$intertemp,
       sets$ele,
-      function(int, e) {
-        if (int %=% 1L) {
-          e <- as.numeric(e)
+      \(int, e) {
+        num <- suppressWarnings(as.numeric(e))
+        if (int %=% 1L && !anyNA(num)) {
+          e <- num
           attr(e, "intertemporal") <- TRUE
         }
         return(e)

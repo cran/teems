@@ -54,13 +54,6 @@
     i Valid subsets include *none*.
     i Call: `ems_swap(var = "tfd", REGr = "not_an_ele")`
 
-# ems_swap errors when endogenous components are selected to swap out
-
-    x Elements or subsets designated for a swap are not part of the set REGr: not_an_ele.
-    i Valid elements include "chn", "row", and "usa".
-    i Valid subsets include *none*.
-    i Call: `ems_swap(var = "tfd", REGr = "not_an_ele")`
-
 # full ems_swap out var not fully exogenous
 
     x "qe" cannot be fully swapped out; it is not fully exogenous.
@@ -118,4 +111,22 @@
     i Set designations in teems are the uppercase set name and lowercase variable-specific index.
     i For "pop" these include: REGr and ALLTIMEt.
     i Call: `ems_swap(var = "pop", NOT_A_SET = "usa")`
+
+# two swaps in on one tuple abort with no valid order
+
+    x No order of the swaps reconciles the closure; 1 swap cannot be applied.
+    i qfd("food","crops","usa",0), qfd("food","crops","usa",1), qfd("food","crops","usa",2), qfd("food","food","usa",0), qfd("food","food","usa",1) and 10 more swapped in 2 and out 0 time(s) while initially endogenous: ems_swap(var = "qfd", COMMc = "food", REGr = "usa"); ems_swap(var = "qfd", COMMc = "food", REGr = "usa")
+    i ems_swap(var = "qfd", COMMc = "food", REGr = "usa") cannot swap in, already exogenous: qfd("food","crops","usa",0), qfd("food","crops","usa",1), qfd("food","crops","usa",2), qfd("food","food","usa",0), qfd("food","food","usa",1) and 10 more
+
+# a tuple swapped out twice aborts with no valid order
+
+    x No order of the swaps reconciles the closure; 1 swap cannot be applied.
+    i tfd("food","crops","usa",0), tfd("food","crops","usa",1), tfd("food","crops","usa",2), tfd("food","food","usa",0), tfd("food","food","usa",1) and 10 more swapped in 0 and out 2 time(s) while initially exogenous: ems_swap(var = "tfd", COMMc = "food", REGr = "usa"); ems_swap(var = "tfd", COMMc = "food", REGr = "usa")
+    i ems_swap(var = "tfd", COMMc = "food", REGr = "usa") cannot swap out, not exogenous: tfd("food","crops","usa",0), tfd("food","crops","usa",1), tfd("food","crops","usa",2), tfd("food","food","usa",0), tfd("food","food","usa",1) and 10 more
+
+# swaps blocking one another abort with no valid order
+
+    x No order of the swaps reconciles the closure; 2 swaps cannot be applied.
+    i ems_swap(var = "qe", ENDWMSe = "ENDWC") cannot swap in, already exogenous: qe("capital","chn",0), qe("capital","row",0), qe("capital","usa",0)
+    i ems_swap(var = "qe", ENDWMSe = "ENDWC") cannot swap out, not exogenous: qe("capital","chn",1), qe("capital","chn",2), qe("capital","row",1), qe("capital","row",2), qe("capital","usa",1) and 1 more
 

@@ -28,6 +28,25 @@
 #'   with .shf extension representing a fully prepared shock
 #'   file. No checks or modifications are carried out on this
 #'   file.
+#' @param ignore_condense Logical length 1 (default is `FALSE`).
+#'   If `TRUE`, `Substitute` and `Backsolve` statements found in
+#'   the model file are ignored, as for [ems_model()] (in-TAB
+#'   `Omit` statements are always ignored). Set this to match the
+#'   `ems_model()` call that produced the closure and shock
+#'   files.
+#' @param solver_args Named list (default `NULL`). The named
+#'   solver arguments [`ems_solve()`] accepts through `...`,
+#'   passed as a list because the in-situ `...` carries the
+#'   input files: the MA48 workspace initial guesses (`laA`,
+#'   `laD`, `laDi`), the expert solver flags (`postsim`,
+#'   `inmemory`, `fastrefac`, `nsbbdblocks`, `withmc66`,
+#'   `smllthreads`, `nowrites`, `condest`, `jacdump`,
+#'   `ma48_cntl2`, `ma48_cntl4`) and the Runge-Kutta run controls
+#'   (`rk_chart`, `rk_norm`, `rk_controller`, `rk_scope`,
+#'   `rk_h0`, `rk_guard`) and the Runge-Kutta step controls
+#'   (`adaptive`, `eps_tolerance`, `max_retries`, `retry_adjust`;
+#'   see [`ems_RK()`]). See the [`ems_solve()`] `...`
+#'   documentation for each argument's meaning.
 #' @seealso [`ems_solve()`] for the standard package-supported
 #'   solver.
 #' @examples
@@ -50,19 +69,20 @@ solve_in_situ <- function(...,
                           model_file,
                           closure_file,
                           shock_file,
-                          solution_method = c("Johansen", "mod_midpoint"),
+                          ignore_condense = FALSE,
+                          solution_method = c("Gragg", "Johansen", "Euler", "Midpoint", "RK2", "Heun", "RK4", "BoSha32", "DoPri54"),
                           matrix_method = c("LU", "DBBD", "SBBD", "NDBBD"),
                           n_subintervals = 1L,
-                          steps = c(2L, 4L, 8L),
+                          steps = NULL,
                           n_tasks = 1L,
-                          laA = 300L,
-                          laD = 200L,
-                          laDi = 500L,
+                          n_threads = 1L,
+                          precision = c("single", "double"),
+                          verbosity = 1L,
                           suppress_outputs = FALSE,
                           terminal_run = FALSE,
-                          append_args = NULL
+                          accuracy_vars = NULL,
+                          solver_args = NULL
 ) {
-call <- match.call()
 if (missing(model_dir)) {
   .cli_missing(model_dir)
 }
@@ -75,30 +95,16 @@ if (missing(closure_file)) {
 if (missing(shock_file)) {
   .cli_missing(shock_file)
 }
-if (missing(...)) {
-  .cli_action(solve_err$no_insitu_inputs,
-    action = "abort",
-    call = call
-  )
-}
-input_files <- list(...)
-return(.implement_solve_in_situ(
-  model_dir = model_dir,
-  model_file = model_file,
-  closure_file = closure_file,
-  input_files = input_files,
-  shock_file = shock_file,
-  solution_method = solution_method,
-  matrix_method = matrix_method,
-  n_subintervals = n_subintervals,
-  steps = steps,
-  n_tasks = n_tasks,
-  laA = laA,
-  laD = laD,
-  laDi = laDi,
-  suppress_outputs = suppress_outputs,
-  terminal_run = terminal_run,
-  append_args = append_args,
+args_list <- mget(setdiff(names(formals()), "..."))
+args_list$input_files <- list(...)
+call <- match.call()
+sol <- .implement_solve_in_situ(
+  args_list = args_list,
   call = call
-))
+)
+if (is.null(sol) || is.character(sol)) {
+  invisible(sol)
+} else {
+  sol
+}
 }

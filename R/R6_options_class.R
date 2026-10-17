@@ -1,7 +1,6 @@
 #' @importFrom R6 R6Class
 #' @importFrom rlang is_integerish caller_env
 #' @importFrom cli cli_abort
-#'
 #' @noRd
 #' @keywords internal
 options_class <- R6::R6Class(
@@ -10,72 +9,126 @@ options_class <- R6::R6Class(
   portable = FALSE,
   cloneable = FALSE,
   public = list(
-    verbose = NULL,
     tempdir = NULL,
+    verbose = NULL,
     ndigits = NULL,
     accuracy_threshold = NULL,
+    accuracy_figures = NULL,
+    accuracy_criterion = NULL,
+    required_figures = NULL,
+    full_exclude = NULL,
     check_shock_status = NULL,
     timestep_header = NULL,
     n_timestep_header = NULL,
-    full_exclude = NULL,
     docker_tag = NULL,
+    assertions = NULL,
+    range_test_initial = NULL,
+    range_test_updated = NULL,
+    random_seed = NULL,
+    refine = NULL,
+    converge = NULL,
 
-    initialize = function(verbose = NULL,
-                          tempdir = NULL,
+    initialize = function(tempdir = NULL,
+                          verbose = NULL,
                           ndigits = NULL,
                           accuracy_threshold = NULL,
+                          accuracy_figures = NULL,
+                          accuracy_criterion = NULL,
+                          required_figures = NULL,
+                          full_exclude = NULL,
                           check_shock_status = NULL,
                           timestep_header = NULL,
                           n_timestep_header = NULL,
-                          full_exclude = NULL,
-                          docker_tag = NULL) {
-      self$verbose <- verbose
+                          docker_tag = NULL,
+                          assertions = NULL,
+                          range_test_initial = NULL,
+                          range_test_updated = NULL,
+                          random_seed = NULL,
+                          refine = NULL,
+                          converge = NULL) {
       self$tempdir <- tempdir
+      self$verbose <- verbose
       self$ndigits <- ndigits
       self$accuracy_threshold <- accuracy_threshold
+      self$accuracy_figures <- accuracy_figures
+      self$accuracy_criterion <- accuracy_criterion
+      self$required_figures <- required_figures
+      self$full_exclude <- full_exclude
       self$check_shock_status <- check_shock_status
       self$timestep_header <- timestep_header
       self$n_timestep_header <- n_timestep_header
-      self$full_exclude <- full_exclude
       self$docker_tag <- docker_tag
+      self$assertions <- assertions
+      self$range_test_initial <- range_test_initial
+      self$range_test_updated <- range_test_updated
+      self$random_seed <- random_seed
+      self$refine <- refine
+      self$converge <- converge
     },
 
     export = function() {
       list(
-        verbose = self$get_verbose(),
         tempdir = self$get_tempdir(),
+        verbose = self$get_verbose(),
         ndigits = self$get_ndigits(),
         accuracy_threshold = self$get_accuracy_threshold(),
+        accuracy_figures = self$get_accuracy_figures(),
+        accuracy_criterion = self$get_accuracy_criterion(),
+        required_figures = self$get_required_figures(),
+        full_exclude = self$get_full_exclude(),
         check_shock_status = self$get_check_shock_status(),
         timestep_header = self$get_timestep_header(),
         n_timestep_header = self$get_n_timestep_header(),
-        full_exclude = self$get_full_exclude(),
-        docker_tag = self$get_docker_tag()
+        docker_tag = self$get_docker_tag(),
+        assertions = self$get_assertions(),
+        range_test_initial = self$get_range_test_initial(),
+        range_test_updated = self$get_range_test_updated(),
+        random_seed = self$get_random_seed(),
+        refine = self$get_refine(),
+        converge = self$get_converge()
       )
     },
 
     import = function(list) {
-      self$set_verbose(list$verbose)
       self$set_tempdir(list$tempdir)
+      self$set_verbose(list$verbose)
       self$set_ndigits(list$ndigits)
       self$set_accuracy_threshold(list$accuracy_threshold)
+      self$set_accuracy_figures(list$accuracy_figures)
+      self$set_accuracy_criterion(list$accuracy_criterion)
+      self$set_required_figures(list$required_figures)
+      self$set_full_exclude(list$full_exclude)
       self$set_check_shock_status(list$check_shock_status)
       self$set_timestep_header(list$timestep_header)
       self$set_n_timestep_header(list$n_timestep_header)
-      self$set_full_exclude(list$full_exclude)
       self$set_docker_tag(list$docker_tag)
+      self$set_assertions(list$assertions)
+      self$set_range_test_initial(list$range_test_initial)
+      self$set_range_test_updated(list$range_test_updated)
+      self$set_random_seed(list$random_seed)
+      self$set_refine(list$refine)
+      self$set_converge(list$converge)
     },
 
     reset = function() {
-      self$verbose <- NULL
       self$tempdir <- NULL
+      self$verbose <- NULL
       self$ndigits <- NULL
       self$accuracy_threshold <- NULL
+      self$accuracy_figures <- NULL
+      self$accuracy_criterion <- NULL
+      self$required_figures <- NULL
+      self$full_exclude <- NULL
       self$check_shock_status <- NULL
       self$timestep_header <- NULL
       self$n_timestep_header <- NULL
-      self$full_exclude <- NULL
       self$docker_tag <- NULL
+      self$assertions <- NULL
+      self$range_test_initial <- NULL
+      self$range_test_updated <- NULL
+      self$random_seed <- NULL
+      self$refine <- NULL
+      self$converge <- NULL
     },
 
     get_verbose = function() {
@@ -90,8 +143,24 @@ options_class <- R6::R6Class(
       self$ndigits %|||% 6L
     },
 
+    get_random_seed = function() {
+      self$random_seed %|||% 1L
+    },
+
     get_accuracy_threshold = function() {
       self$accuracy_threshold %|||% 0.8
+    },
+
+    get_accuracy_figures = function() {
+      self$accuracy_figures %|||% 4L
+    },
+
+    get_accuracy_criterion = function() {
+      self$accuracy_criterion %|||% "solution"
+    },
+
+    get_required_figures = function() {
+      self$required_figures
     },
 
     get_check_shock_status = function() {
@@ -114,6 +183,26 @@ options_class <- R6::R6Class(
       self$docker_tag %|||% "latest"
     },
 
+    get_assertions = function() {
+      self$assertions %|||% "fatal"
+    },
+
+    get_range_test_initial = function() {
+      self$range_test_initial %|||% "fatal"
+    },
+
+    get_range_test_updated = function() {
+      self$range_test_updated %|||% "warn"
+    },
+
+    get_refine = function() {
+      self$refine %|||% TRUE
+    },
+
+    get_converge = function() {
+      self$converge %|||% FALSE
+    },
+
     set_verbose = function(verbose, call = rlang::caller_env()) {
       self$validate_verbose(verbose, call = call)
       self$verbose <- verbose
@@ -129,9 +218,37 @@ options_class <- R6::R6Class(
       self$ndigits <- ndigits
     },
 
+    set_random_seed = function(random_seed, call = rlang::caller_env()) {
+      self$validate_random_seed(random_seed, call = call)
+      self$random_seed <- as.integer(random_seed)
+    },
+
     set_accuracy_threshold = function(accuracy_threshold, call = rlang::caller_env()) {
       self$validate_accuracy_threshold(accuracy_threshold, call = call)
       self$accuracy_threshold <- accuracy_threshold
+    },
+
+    set_accuracy_figures = function(accuracy_figures, call = rlang::caller_env()) {
+      if (!is.null(accuracy_figures)) {
+        self$validate_accuracy_figures(accuracy_figures, call = call)
+        accuracy_figures <- as.integer(accuracy_figures)
+      }
+      self$accuracy_figures <- accuracy_figures
+    },
+
+    set_accuracy_criterion = function(accuracy_criterion, call = rlang::caller_env()) {
+      if (!is.null(accuracy_criterion)) {
+        self$validate_accuracy_criterion(accuracy_criterion, call = call)
+      }
+      self$accuracy_criterion <- accuracy_criterion
+    },
+
+    set_required_figures = function(required_figures, call = rlang::caller_env()) {
+      if (!is.null(required_figures)) {
+        self$validate_required_figures(required_figures, call = call)
+        required_figures <- as.integer(required_figures)
+      }
+      self$required_figures <- required_figures
     },
 
     set_check_shock_status = function(check_shock_status, call = rlang::caller_env()) {
@@ -159,57 +276,143 @@ options_class <- R6::R6Class(
       self$docker_tag <- docker_tag
     },
 
+    set_assertions = function(assertions, call = rlang::caller_env()) {
+      self$validate_assertions(assertions, call = call)
+      self$assertions <- assertions
+    },
+
+    set_range_test_initial = function(range_test_initial, call = rlang::caller_env()) {
+      self$validate_range_test_initial(range_test_initial, call = call)
+      self$range_test_initial <- range_test_initial
+    },
+
+    set_range_test_updated = function(range_test_updated, call = rlang::caller_env()) {
+      self$validate_range_test_updated(range_test_updated, call = call)
+      self$range_test_updated <- range_test_updated
+    },
+
+    set_refine = function(refine, call = rlang::caller_env()) {
+      self$validate_refine(refine, call = call)
+      self$refine <- refine
+    },
+
+    set_converge = function(converge, call = rlang::caller_env()) {
+      self$validate_converge(converge, call = call)
+      self$converge <- converge
+    },
+
     validate_verbose = function(verbose, call = rlang::caller_env()) {
       if (!is.logical(verbose) || length(verbose) != 1 || is.na(verbose)) {
-        cli::cli_abort("{.arg verbose} must be TRUE or FALSE.", call = call)
+        cli::cli_abort(gen_err$opt_verbose, call = call)
       }
     },
 
     validate_tempdir = function(tempdir, call = rlang::caller_env()) {
       if (!is.character(tempdir) || length(tempdir) != 1 || !dir.exists(tempdir)) {
-        cli::cli_abort("{.path {tempdir}} does not exist.", call = call)
+        cli::cli_abort(gen_err$opt_tempdir, call = call)
       }
     },
 
     validate_ndigits = function(ndigits, call = rlang::caller_env()) {
       if (!rlang::is_integerish(ndigits)) {
-        cli::cli_abort("{.arg ndigits} must be an integer or coercible to one.", call = call)
+        cli::cli_abort(gen_err$opt_ndigits, call = call)
+      }
+    },
+
+    validate_random_seed = function(random_seed, call = rlang::caller_env()) {
+      if (!rlang::is_integerish(random_seed, n = 1L, finite = TRUE) ||
+        random_seed < 0 || random_seed > .Machine$integer.max) {
+        cli::cli_abort(gen_err$opt_random_seed, call = call)
       }
     },
 
     validate_accuracy_threshold = function(accuracy_threshold, call = rlang::caller_env()) {
       if (!is.numeric(accuracy_threshold) || accuracy_threshold > 1 || accuracy_threshold < 0) {
-        cli::cli_abort("{.arg accuracy_threshold} must be a numeric between 0 and 1.", call = call)
+        cli::cli_abort(gen_err$opt_accuracy_threshold, call = call)
+      }
+    },
+
+    validate_accuracy_figures = function(accuracy_figures, call = rlang::caller_env()) {
+      if (!rlang::is_integerish(accuracy_figures, n = 1L, finite = TRUE) ||
+        accuracy_figures < 1 || accuracy_figures > 6) {
+        cli::cli_abort(gen_err$opt_accuracy_figures, call = call)
+      }
+    },
+
+    validate_required_figures = function(required_figures, call = rlang::caller_env()) {
+      if (!rlang::is_integerish(required_figures, n = 1L, finite = TRUE) ||
+        required_figures < 1 || required_figures > 6) {
+        cli::cli_abort(gen_err$opt_required_figures, call = call)
+      }
+    },
+
+    validate_accuracy_criterion = function(accuracy_criterion, call = rlang::caller_env()) {
+      if (!is.character(accuracy_criterion) || length(accuracy_criterion) != 1L ||
+        !accuracy_criterion %in% c("solution", "data", "both")) {
+        cli::cli_abort(gen_err$opt_accuracy_criterion, call = call)
       }
     },
 
     validate_check_shock_status = function(check_shock_status, call = rlang::caller_env()) {
       if (!is.logical(check_shock_status) || length(check_shock_status) != 1 || is.na(check_shock_status)) {
-        cli::cli_abort("{.arg check_shock_status} must be TRUE or FALSE.", call = call)
+        cli::cli_abort(gen_err$opt_check_shock_status, call = call)
       }
     },
 
     validate_timestep_header = function(timestep_header, call = rlang::caller_env()) {
       if (!is.character(timestep_header) || toupper(timestep_header) %!=% timestep_header) {
-        cli::cli_abort("{.arg timestep_header} must be an upper case character vector.", call = call)
+        cli::cli_abort(gen_err$opt_timestep_header, call = call)
       }
     },
 
     validate_n_timestep_header = function(n_timestep_header, call = rlang::caller_env()) {
       if (!is.character(n_timestep_header) || toupper(n_timestep_header) %!=% n_timestep_header) {
-        cli::cli_abort("{.arg n_timestep_header} must be an upper case character vector.", call = call)
+        cli::cli_abort(gen_err$opt_n_timestep_header, call = call)
       }
     },
 
     validate_full_exclude = function(full_exclude, call = rlang::caller_env()) {
       if (!is.character(full_exclude)) {
-        cli::cli_abort("{.arg full_exclude} must be a character vector.", call = call)
+        cli::cli_abort(gen_err$opt_full_exclude, call = call)
       }
     },
 
     validate_docker_tag = function(docker_tag, call = rlang::caller_env()) {
       if (!is.character(docker_tag)) {
-        cli::cli_abort("{.arg docker_tag} must be a character vector.", call = call)
+        cli::cli_abort(gen_err$opt_docker_tag, call = call)
+      }
+    },
+
+    validate_assertions = function(assertions, call = rlang::caller_env()) {
+      if (!is.character(assertions) || length(assertions) != 1L ||
+        !assertions %in% c("fatal", "warn", "off")) {
+        cli::cli_abort(gen_err$opt_assertions, call = call)
+      }
+    },
+
+    validate_range_test_initial = function(range_test_initial, call = rlang::caller_env()) {
+      if (!is.character(range_test_initial) || length(range_test_initial) != 1L ||
+        !range_test_initial %in% c("fatal", "warn", "off")) {
+        cli::cli_abort(gen_err$opt_range_test_initial, call = call)
+      }
+    },
+
+    validate_range_test_updated = function(range_test_updated, call = rlang::caller_env()) {
+      if (!is.character(range_test_updated) || length(range_test_updated) != 1L ||
+        !range_test_updated %in% c("fatal", "warn", "off")) {
+        cli::cli_abort(gen_err$opt_range_test_updated, call = call)
+      }
+    },
+
+    validate_refine = function(refine, call = rlang::caller_env()) {
+      if (!is.logical(refine) || length(refine) != 1 || is.na(refine)) {
+        cli::cli_abort(gen_err$opt_refine, call = call)
+      }
+    },
+
+    validate_converge = function(converge, call = rlang::caller_env()) {
+      if (!is.logical(converge) || length(converge) != 1 || is.na(converge)) {
+        cli::cli_abort(gen_err$opt_converge, call = call)
       }
     },
 
@@ -218,11 +421,18 @@ options_class <- R6::R6Class(
       self$validate_tempdir(self$get_tempdir())
       self$validate_ndigits(self$get_ndigits())
       self$validate_accuracy_threshold(self$get_accuracy_threshold())
+      self$validate_accuracy_figures(self$get_accuracy_figures())
+      self$validate_accuracy_criterion(self$get_accuracy_criterion())
       self$validate_check_shock_status(self$get_check_shock_status())
       self$validate_timestep_header(self$get_timestep_header())
       self$validate_n_timestep_header(self$get_n_timestep_header())
       self$validate_full_exclude(self$get_full_exclude())
       self$validate_docker_tag(self$get_docker_tag())
+      self$validate_assertions(self$get_assertions())
+      self$validate_range_test_initial(self$get_range_test_initial())
+      self$validate_range_test_updated(self$get_range_test_updated())
+      self$validate_refine(self$get_refine())
+      self$validate_converge(self$get_converge())
     }
   )
 )
@@ -235,8 +445,11 @@ options_new <- function(verbose = NULL,
                         timestep_header = NULL,
                         n_timestep_header = NULL,
                         full_exclude = NULL,
-                        docker_tag = NULL) {
-  options_class$new(
+                        docker_tag = NULL,
+                        assertions = NULL,
+                        range_test_initial = NULL,
+                        range_test_updated = NULL) {
+  return(options_class$new(
     verbose = verbose,
     tempdir = tempdir,
     ndigits = ndigits,
@@ -245,8 +458,11 @@ options_new <- function(verbose = NULL,
     timestep_header = timestep_header,
     n_timestep_header = n_timestep_header,
     full_exclude = full_exclude,
-    docker_tag = docker_tag
-  )
+    docker_tag = docker_tag,
+    assertions = assertions,
+    range_test_initial = range_test_initial,
+    range_test_updated = range_test_updated
+  ))
 }
 
 ems_options <- options_new()

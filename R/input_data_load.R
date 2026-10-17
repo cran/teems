@@ -1,12 +1,12 @@
 #' @importFrom purrr map_lgl
-#'
 #' @noRd
 #' @keywords internal
 .load_input_data <- function(dat_input,
                              par_input,
                              set_input,
                              data_call,
-                             convert = FALSE) {
+                             convert = FALSE,
+                             generic = FALSE) {
 
   if (!is.list(dat_input)) {
     dat_input <- .read_input(
@@ -17,6 +17,17 @@
   }
   
   metadata <- attr(dat_input, "metadata")
+
+  if (generic) {
+    i_data <- .split_generic_headers(dat_input = dat_input)
+    metadata <- attr(i_data, "metadata")
+    if (.o_verbose()) {
+      .inform_generic(metadata = metadata)
+    }
+    attr(i_data, "metadata") <- metadata
+    class(i_data) <- c(metadata$data_format, class(i_data))
+    return(i_data)
+  }
 
   if (!is.list(par_input)) {
     par_input <- .read_input(
@@ -43,6 +54,7 @@
       i_data <- i_data[!duplicated(names(i_data), fromLast = TRUE)]
     }
   }
+  
   .check_database_version(
     vetted = vetted_db_versions,
     provided = metadata$full_database_version,

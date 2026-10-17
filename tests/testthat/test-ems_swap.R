@@ -30,7 +30,7 @@ dat <- ems_data(
   time_steps = c(0, 1, 2)
 )
 
-model <- ems_model(model_file, closure_file)
+model <- ems_model(model_file, closure_file, ignore_condense = TRUE)
 
 test_that("ems_swap errors when var is missing", {
   expect_snapshot_error(ems_swap())
@@ -121,12 +121,6 @@ test_that("ems_swap errors when invalid element provided to swap-out", {
   expect_snapshot_error(ems_deploy(dat, model, swap_out = swap_out))
 })
 
-test_that("ems_swap errors when endogenous components are selected to swap out", {
-  nest_temp("invalid_swap7", write_dir)
-  swap_out <- ems_swap("tfd", REGr = "not_an_ele")
-  expect_snapshot_error(ems_deploy(dat, model, swap_out = swap_out))
-})
-
 test_that("full ems_swap out var not fully exogenous", {
   nest_temp("deploy_swap", write_dir)
   swap_out <- ems_swap("qe")
@@ -187,25 +181,189 @@ test_that("ems_swap out subset not valid", {
   expect_snapshot_error(ems_deploy(dat, model, swap_out = swap_out))
 })
 
-test_that("ems_swap examples work", {
-  # Full variable swaps
-  expect_type(ems_swap("tfd"), "list") # out
-  expect_type(ems_swap("qfd"), "list") # in
-
-  # Partial variable swaps with uniform "PROD_COMM" set
-  # application (note distinction between "REGr" and "REGs") in
-  # the classic GTAP model (version 6.2)
-  expect_type(ems_swap("tfd", TRAD_COMMi = "food", REGr = "chn"), "list") # out
-  expect_type(ems_swap("qfd", TRAD_COMMi = "food", REGs = "chn"), "list") # in
-
-  # Partial variable, multiple element swaps with uniform "ACTS"
-  # set application in the standard GTAP model (version 7.0).
-  expect_type(ems_swap("tfd", COMMc = c("food", "crops"), REGr = "usa"), "list") # out
-  expect_type(ems_swap("qfd", COMMc = c("food", "crops"), REGr = "usa"), "list") # in
-
-  # Valid subsets may also be selected.
-  expect_type(ems_swap("txs", COMMc = "NMRG", ALLTIMEt = "FWDTIME"), "list") # out
-  expect_type(ems_swap("qxs", COMMc = "NMRG", ALLTIMEt = "FWDTIME"), "list") # in
+test_that("swap variables match case-insensitively", {
+  cmf <- ems_deploy(dat, model, swap_in = "QFD", swap_out = "TFD")
+  cls <- readLines(file.path(dirname(cmf), paste0(tools::file_path_sans_ext(basename(cmf)), ".cls")))
+  expect_true("qfd" %in% cls)
+  expect_false("tfd" %in% cls)
 })
 
-unlink(tools::R_user_dir("teems", "cache"), recursive = TRUE)
+test_that("partial swap set, index and element names match case-insensitively", {
+  cls_of <- function(cmf) {
+    readLines(file.path(dirname(cmf), paste0(tools::file_path_sans_ext(basename(cmf)), ".cls")))
+  }
+  canon <- cls_of(ems_deploy(dat, model,
+    swap_in = ems_swap("qfd", COMMc = "food", REGr = "usa"),
+    swap_out = ems_swap("tfd", COMMc = "food", REGr = "usa")
+  ))
+  mixed <- cls_of(ems_deploy(dat, model,
+    swap_in = ems_swap("QFD", commc = "FOOD", REGR = "Usa"),
+    swap_out = ems_swap("TFD", COMMC = "Food", regr = "USA")
+  ))
+  expect_identical(mixed, canon)
+})
+
+cls_lines <- function(cmf) {
+  readLines(file.path(dirname(cmf), paste0(tools::file_path_sans_ext(basename(cmf)), ".cls")))
+}
+
+test_that("a variable swapped in whole and a slice swapped back reconciles", {
+  nest_temp("reconcile_reswap", write_dir)
+  base <- cls_lines(ems_deploy(dat, model))
+  cls <- cls_lines(ems_deploy(dat, model,
+    swap_in = list("qfd", ems_swap("tfd", COMMc = "food", REGr = "usa")),
+    swap_out = list("tfd", ems_swap("qfd", COMMc = "food", REGr = "usa"))
+  ))
+  expect_false("tfd" %in% cls)
+  expect_true("tfd(\"food\",ACTS,\"usa\",ALLTIME)" %in% cls)
+  expect_false("qfd" %in% cls)
+  expect_false(any(grepl("^qfd\\(\"food\",ACTS,\"usa\"", cls)))
+  expect_true("qfd(\"food\",ACTS,\"chn\",ALLTIME)" %in% cls)
+  expect_identical(setdiff(base, cls), "tfd")
+})
+
+test_that("a swap and its mirror leave the closure unchanged", {
+  nest_temp("reconcile_mirror", write_dir)
+  base <- cls_lines(ems_deploy(dat, model))
+  cls <- cls_lines(ems_deploy(dat, model,
+    swap_in = list("qfd", "tfd"),
+    swap_out = list("tfd", "qfd")
+  ))
+  expect_identical(cls, base)
+})
+
+test_that("a tuple swapped in while exogenous and swapped out is a no-op", {
+  nest_temp("reconcile_noop", write_dir)
+  base <- cls_lines(ems_deploy(dat, model))
+  cls <- cls_lines(ems_deploy(dat, model,
+    swap_in = ems_swap("tfd", COMMc = "food", REGr = "usa"),
+    swap_out = ems_swap("tfd", COMMc = "food", REGr = "usa")
+  ))
+  expect_identical(cls, base)
+})
+
+test_that("two swaps in on one tuple abort with no valid order", {
+  nest_temp("reconcile_parity", write_dir)
+  swap_in <- list(
+    ems_swap("qfd", COMMc = "food", REGr = "usa"),
+    ems_swap("qfd", COMMc = "food", REGr = "usa")
+  )
+  swap_out <- ems_swap("tfd", COMMc = "food", REGr = "usa")
+  expect_snapshot_error(ems_deploy(dat, model, swap_in = swap_in, swap_out = swap_out))
+})
+
+test_that("a tuple swapped out twice aborts with no valid order", {
+  nest_temp("reconcile_out_twice", write_dir)
+  swap_out <- list(
+    ems_swap("tfd", COMMc = "food", REGr = "usa"),
+    ems_swap("tfd", COMMc = "food", REGr = "usa")
+  )
+  swap_in <- ems_swap("qfd", COMMc = "food", REGr = "usa")
+  expect_snapshot_error(ems_deploy(dat, model, swap_in = swap_in, swap_out = swap_out))
+})
+
+test_that("swaps blocking one another abort with no valid order", {
+  nest_temp("reconcile_blocked", write_dir)
+  swap_in <- ems_swap("qe", ENDWMSe = "ENDWC")
+  swap_out <- ems_swap("qe", ENDWMSe = "ENDWC")
+  expect_snapshot_error(ems_deploy(dat, model, swap_in = swap_in, swap_out = swap_out))
+})
+
+subset_closure_model <- function(entries) {
+  cls_dir <- file.path(write_dir, "subset_closure")
+  dir.create(cls_dir, showWarnings = FALSE)
+  cls_file <- file.path(cls_dir, basename(closure_file))
+  cls <- readLines(closure_file)
+  i <- which(trimws(cls) == "tfd")
+  writeLines(c(cls[seq_len(i - 1L)], entries, cls[-seq_len(i)]), cls_file)
+  ems_model(model_file, cls_file, ignore_condense = TRUE)
+}
+
+test_that("every documented swap form expands the same way, bare or inside a list", {
+  multi_in <- ems_swap("qfd", COMMc = c("food", "crops"), REGr = "usa")
+  multi_out <- ems_swap("tfd", COMMc = c("food", "crops"), REGr = "usa")
+  single_in <- ems_swap("qfd", COMMc = "food", REGr = "usa")
+  single_out <- ems_swap("tfd", COMMc = "food", REGr = "usa")
+  deploy_cls <- function(name, ...) {
+    nest_temp(name, write_dir)
+    cls_lines(ems_deploy(dat, model, ...))
+  }
+  bare_multi <- deploy_cls("form_bare_multi", swap_in = multi_in, swap_out = multi_out)
+  expect_true(all(c("qfd(\"food\",ACTS,\"usa\",ALLTIME)", "qfd(\"crops\",ACTS,\"usa\",ALLTIME)") %in% bare_multi))
+  expect_false(any(grepl("^tfd\\(\"(food|crops)\",ACTS,\"usa\"", bare_multi)))
+  expect_identical(deploy_cls("form_list_multi", swap_in = list(multi_in), swap_out = list(multi_out)), bare_multi)
+  expect_identical(deploy_cls("form_list_multi_unwrapped", swap_in = list(multi_in[[1]]), swap_out = list(multi_out[[1]])), bare_multi)
+
+  bare_single <- deploy_cls("form_bare_single", swap_in = single_in, swap_out = single_out)
+  expect_identical(deploy_cls("form_list_single", swap_in = list(single_in), swap_out = list(single_out)), bare_single)
+
+  with_plain <- deploy_cls("form_bare_multi_plain", swap_in = list(multi_in, "yp"), swap_out = list(multi_out, "dppriv"))
+  expect_true("yp" %in% with_plain)
+  expect_false("dppriv" %in% with_plain)
+  expect_true(all(c("qfd(\"food\",ACTS,\"usa\",ALLTIME)", "qfd(\"crops\",ACTS,\"usa\",ALLTIME)") %in% with_plain))
+  expect_setequal(deploy_cls("form_plain_first", swap_in = list("yp", multi_in), swap_out = list("dppriv", multi_out)), with_plain)
+  expect_setequal(deploy_cls("form_vector_plain", swap_in = c("yp", "qfd"), swap_out = c("dppriv", "tfd")),
+                  deploy_cls("form_list_plain", swap_in = list("yp", "qfd"), swap_out = list("dppriv", "tfd")))
+
+  single_chn_in <- ems_swap("qfd", COMMc = "svces", REGr = "chn")
+  single_chn_out <- ems_swap("tfd", COMMc = "svces", REGr = "chn")
+  mixed <- deploy_cls("form_mixed", swap_in = list(multi_in, single_chn_in), swap_out = list(multi_out, single_chn_out))
+  expect_true(all(c("qfd(\"food\",ACTS,\"usa\",ALLTIME)", "qfd(\"crops\",ACTS,\"usa\",ALLTIME)", "qfd(\"svces\",ACTS,\"chn\",ALLTIME)") %in% mixed))
+  expect_setequal(deploy_cls("form_mixed_reversed", swap_in = list(single_chn_in, multi_in), swap_out = list(single_chn_out, multi_out)), mixed)
+  expect_setequal(deploy_cls("form_mixed_unwrapped", swap_in = list(multi_in[[1]], single_chn_in[[1]]), swap_out = list(multi_out[[1]], single_chn_out[[1]])), mixed)
+})
+
+test_that(".expand_ele expands a multi swap whether or not it is still wrapped", {
+  multi <- ems_swap("qfd", COMMc = c("food", "crops"), REGr = c("usa", "chn"))
+  bare <- .expand_ele(multi)
+  expect_length(bare, 4L)
+  expect_false(any(vapply(bare, inherits, logical(1), "multi")))
+  single <- ems_swap("qfd", COMMc = "svces", REGr = "chn")
+  unwrapped <- lapply(list(multi, "yp", single), \(s) if (is.null(names(s))) s[[1]] else s)
+  expanded <- .expand_ele(unwrapped)
+  expect_length(expanded, 6L)
+  expect_identical(expanded[[5]], "yp")
+  expect_identical(expanded[[6]], single[[1]])
+  expect_setequal(
+    vapply(expanded[1:4], \(e) paste(e$subset$COMMc, e$subset$REGr), character(1)),
+    c("food usa", "food chn", "crops usa", "crops chn")
+  )
+  shocks <- lapply(
+    list(ems_uniform_shock("pop", 1, REGr = c("usa", "chn")), ems_uniform_shock("pop", 2, REGr = "row")),
+    \(s) if (is.null(names(s))) s[[1]] else s
+  )
+  expanded <- .expand_ele(shocks)
+  expect_length(expanded, 3L)
+  expect_identical(vapply(expanded, \(e) e$var, character(1)), c("pop", "pop", "pop"))
+  expect_identical(expanded[[3]]$subset$REGr, "row")
+})
+
+test_that("a partial swap-out of a subset-named entry keeps the subset", {
+  nest_temp("subset_entry", write_dir)
+  m <- subset_closure_model(c("tfd(NMRG,ACTS,REG,ALLTIME)", "tfd(MARG,ACTS,REG,ALLTIME)"))
+  cls <- cls_lines(ems_deploy(dat, m,
+    swap_in = ems_swap("qfd", COMMc = "NMRG", REGr = "chn"),
+    swap_out = ems_swap("tfd", COMMc = "NMRG", REGr = "chn")
+  ))
+  expect_setequal(
+    grep("^tfd", cls, value = TRUE),
+    c("tfd(MARG,ACTS,REG,ALLTIME)", "tfd(NMRG,ACTS,\"row\",ALLTIME)", "tfd(NMRG,ACTS,\"usa\",ALLTIME)")
+  )
+})
+
+test_that("a partial swap-out of a mixed entry keeps its subset", {
+  nest_temp("mixed_entry", write_dir)
+  m <- subset_closure_model(c(
+    "tfd(NMRG,ACTS,\"chn\",ALLTIME)", "tfd(NMRG,ACTS,\"usa\",ALLTIME)",
+    "tfd(NMRG,ACTS,\"row\",ALLTIME)", "tfd(MARG,ACTS,REG,ALLTIME)"
+  ))
+  cls <- cls_lines(ems_deploy(dat, m,
+    swap_in = ems_swap("qfd", COMMc = "food", REGr = "chn"),
+    swap_out = ems_swap("tfd", COMMc = "food", REGr = "chn")
+  ))
+  expect_true(all(c("tfd(NMRG,ACTS,\"usa\",ALLTIME)", "tfd(NMRG,ACTS,\"row\",ALLTIME)") %in% cls))
+  expect_false(any(grepl("^tfd\\(\"food\",ACTS,\"chn\"", cls)))
+  expect_false(any(grepl("^tfd\\(COMM", cls)))
+})
+
+unlink(write_dir, recursive = TRUE)

@@ -1,0 +1,630 @@
+skip_on_cran()
+
+local_solver_log <- function(lines, env = parent.frame()) {
+  run_dir <- withr::local_tempdir(.local_envir = env)
+  diag_out <- file.path(run_dir, "diag.txt")
+  writeLines(lines, diag_out)
+  list(diag_out = diag_out, run = run_dir)
+}
+
+check_log <- function(paths) {
+  .check_solver_log(
+    elapsed_time = proc.time(),
+    solve_cmd = "cmd",
+    paths = paths,
+    call = NULL
+  )
+}
+
+test_that("TAB errors map to the model-specification abort", {
+  paths <- local_solver_log(c(
+    "solver banner",
+    "Error: name psave is declared as both a coefficient and a variable; names are case-insensitive and must be unique (GEMPACK manual 11.2.1)"
+  ))
+  expect_error(
+    check_log(paths),
+    "rejected the model specification with 1 error"
+  )
+  expect_error(check_log(paths), "11.2.1")
+})
+
+test_that("multiple TAB errors are previewed with their manual sections", {
+  paths <- local_solver_log(c(
+    "Error: coefficient dupx is declared more than once (GEMPACK manual 11.2.1)",
+    "Error: unknown variable qualifier 'foo'"
+  ))
+  expect_error(check_log(paths), "2 errors")
+  expect_error(check_log(paths), "unknown variable qualifier")
+})
+
+test_that("braces in a solver error line are relayed as written", {
+  paths <- local_solver_log(c(
+    "Error: normal{factor_1{r}} is not a coefficient, variable or number and cannot be an arithmetic operand (an index or quoted element compares through $POS, GEMPACK manual 11.5.6/11.4.11)"
+  ))
+  err <- tryCatch(check_log(paths), error = function(e) conditionMessage(e))
+  expect_match(err, "normal{factor_1{r}} is not a coefficient", fixed = TRUE)
+  expect_no_match(err, "{{", fixed = TRUE)
+})
+
+test_that("closure errors map to the closure abort", {
+  paths <- local_solver_log(c(
+    "Error: variable qgdp is not declared",
+    "Error: element usa is not in set REG (in qxs)"
+  ))
+  expect_error(
+    check_log(paths),
+    "rejected the closure or shock inputs with 2 errors"
+  )
+})
+
+test_that("shock-file errors map to the closure abort", {
+  paths <- local_solver_log(
+    "Error: qxs in the shock file is not a declared variable"
+  )
+  expect_error(check_log(paths), "closure or shock inputs")
+})
+
+test_that("C9 fail-fast reader wordings map to the closure abort", {
+  # "cannot open closure file" must hit the closure row, not the
+  # generic data-class "cannot open"
+  paths <- local_solver_log(c(
+    "Error: cannot open closure file /run/GTAPv7.cls",
+    "Error: wrong number of arguments for variable afall (closure file)"
+  ))
+  expect_error(
+    check_log(paths),
+    "rejected the closure or shock inputs with 2 errors"
+  )
+  paths <- local_solver_log(
+    "Error: shock statement for variable pop supplies fewer values than elements (3 expected) (shock file)"
+  )
+  expect_error(check_log(paths), "closure or shock inputs")
+})
+
+test_that("data errors map to the data abort", {
+  paths <- local_solver_log(
+    'Error: header "VKB" not found in the data file'
+  )
+  expect_error(check_log(paths), "could not read the model data")
+})
+
+test_that("runtime errors map to the numeric abort", {
+  paths <- local_solver_log(
+    "Error: division by zero in Formula zdte; Zerodivide (nonzero_by_zero) is off -- set a default with Zerodivide (nonzero_by_zero) default <value> or guard with ID01"
+  )
+  expect_error(check_log(paths), "runtime error")
+  expect_error(check_log(paths), "10.11.1")
+})
+
+test_that("equation and update divisions by zero map to the numeric abort", {
+  paths <- local_solver_log(
+    "Error: division by zero in Equation E_qo, where it is never allowed (GEMPACK manual 10.11.1; Zerodivide statements apply to Formulas only) -- guard the denominator with ID01 or ID0V"
+  )
+  expect_error(check_log(paths), "runtime error")
+  expect_error(check_log(paths), "10.11.1")
+})
+
+test_that("non-finite coefficients and condition operands map to the numeric abort", {
+  paths <- local_solver_log(
+    "Error: a coefficient in Equation E_qo is not finite (infinite): a division, LOGE, SQRT or power left its domain or the value overflowed (arithmetic error, GEMPACK manual 34.3)"
+  )
+  expect_error(check_log(paths), "runtime error")
+  expect_error(check_log(paths), "34.3")
+})
+
+test_that("workspace exhaustion maps to the resource abort", {
+  # the three solver-side workspace fatals (solve_drivers.c ma48_grow_la
+  # ceiling, the growth loops, and a declined fast refactorize)
+  paths <- local_solver_log(
+    paste(
+      "Error: factorizing condensed system needs a larger MA48 workspace",
+      "than the 2147483647-element limit of the 32-bit HSL build (-laA is",
+      "already at its 1545% ceiling); this system is too large for one",
+      "sequential factorization -- solve it with a bordered matrix_method",
+      '("SBBD" or "DBBD"), condense the model, or reduce its dimensions'
+    )
+  )
+  expect_error(check_log(paths), "ran out of factorization workspace")
+  expect_error(check_log(paths), "matrix_method")
+  paths <- local_solver_log(
+    paste(
+      "Error: the MA48 workspace for DBBD diagonal block did not converge",
+      "after 6 growth attempts; raise the initial workspace (laA/laD/laDi)",
+      'or use a bordered matrix_method ("SBBD" or "DBBD")'
+    )
+  )
+  expect_error(check_log(paths), "ran out of factorization workspace")
+  paths <- local_solver_log(
+    paste(
+      "Error: MA48 could not factorize NDBBD diagonal block after repeated",
+      "retries (the fast refactorization was declined each time); re-run",
+      "with fastrefac = FALSE, or use a different matrix_method"
+    )
+  )
+  expect_error(check_log(paths), "ran out of factorization workspace")
+})
+
+test_that("index ceiling maps to the size abort", {
+  # solve_drivers.c jac_mat_prealloc: the one-rank Jacobian copy passes
+  # the PetscInt total, and a PETSc preallocation failure after the check
+  paths <- local_solver_log(
+    paste(
+      "Error: assembling the Jacobian for the linear system needs",
+      "2493188469 nonzeros, above the 2147483647-nonzero ceiling of the",
+      "32-bit PetscInt build; every HSL matrix_method (\"LU\", \"SBBD\")",
+      "keeps the whole system on one rank, so more ranks do not help --",
+      "condense the model, reduce its dimensions, or use the distributed",
+      "matrix_method \"DBBD\""
+    )
+  )
+  expect_error(check_log(paths), "too large for the solver")
+  expect_error(check_log(paths), "DBBD")
+  paths <- local_solver_log(
+    "Error: PETSc could not preallocate the exogenous block for the linear system (PETSc error 63)"
+  )
+  expect_error(check_log(paths), "too large for the solver")
+  # hsl_kernels.f90 hsl_i4: an INTEGER(8) count past HSL_MP48's INTEGER(4)
+  paths <- local_solver_log(
+    "Error: NE = 2147483648 exceeds the 32-bit HSL MP48 interface"
+  )
+  expect_error(check_log(paths), "too large for the solver")
+})
+
+test_that("TAB class takes priority over data class", {
+  paths <- local_solver_log(c(
+    "Error: cannot open file baddata.har",
+    "Error: set marg is declared as both a coefficient and a set (GEMPACK manual 11.2.1)"
+  ))
+  expect_error(check_log(paths), "rejected the model specification")
+})
+
+test_that("unmapped Error lines fall back to the generic abort", {
+  paths <- local_solver_log(
+    "Error: some entirely novel condition"
+  )
+  expect_error(check_log(paths), "Errors detected during solution")
+  expect_error(check_log(paths), "some entirely novel condition")
+  paths <- local_solver_log(
+    "fatal error in step 3 with no Error prefix"
+  )
+  expect_error(check_log(paths), "Errors detected during solution")
+  expect_error(check_log(paths), "fatal error in step 3")
+})
+
+test_that("fatals added after the 10-05 audit map to their classes", {
+  lines <- c(
+    "pop is shocked by -100 percent, which the Runge-Kutta methods cannot take: each step that reaches zero is rejected and retried at half the size without end (GEMPACK manual 30.2)",
+    "the complementarity accurate run (GEMPACK manual 51.7.1) shocks x by -100 percent to reach its bound of zero, which the Gragg method cannot take (GEMPACK manual 30.2)",
+    "DBBD (-matsol 2) found no partition set and its chain blocks over ALLTIME hold only 10 of 100 equations (border 90.0%); use -matsol 1 (SBBD) or -matsol 0 (LU)",
+    "mapping MX is never given values (GEMPACK manual 11.9.1)",
+    "zzz is not an element of set REG, the domain of mapping MX (GEMPACK manual 11.9.2)",
+    "zzz is not an element of set COMM, the codomain of mapping MX (GEMPACK manual 11.9.2)",
+    "mapping MX takes one argument in a Formula (GEMPACK manual 10.13.1): y",
+    "a set mapping applied to the element usa (mapping MX) is not supported in an expression yet; write the codomain element it maps to (GEMPACK manual 11.9.6)",
+    "$POS(\"usa\") needs the set as second argument (GEMPACK manual 11.5.6)",
+    "index t of x ranges over set ALLTIME, and its element t[3] lands on ALLTIME[4], outside set FWDTIME (FWDTIME[1] - FWDTIME[3]); intertemporal elements line up by number (GEMPACK manual 16.4)",
+    "the size of intertemporal set ALLTIME comes from coefficient NT, which no Read statement reads from a file; give the count by a Read, or write the elements out (GEMPACK manual 10.1)",
+    "the size of set REG comes from NREG, which no Read statement supplies as an integer from a data file (GEMPACK manual 10.1 style (4))",
+    "loops nested too deeply"
+  )
+  mapped <- .map_solver_errors(lines)
+  expect_identical(mapped$class, c("closure", "closure", "method", rep("tab", 10L)))
+  expect_identical(mapped$manual[1:3], c("30.2", "30.2", NA))
+  expect_identical(mapped$manual[4:12], c("11.9.1", "11.9.2", "11.9.2", "10.13.1", "11.9.6", "11.5.6", "16.4", "10.1", "10.1"))
+})
+
+test_that("a matrix method the model cannot take routes to the method abort", {
+  paths <- local_solver_log(
+    "Error: DBBD (-matsol 2) found no partition set and its chain blocks over ALLTIME hold only 10 of 100 equations (border 90.0%); use -matsol 1 (SBBD) or -matsol 0 (LU)"
+  )
+  expect_error(check_log(paths), "cannot run the chosen matrix method")
+  expect_error(check_log(paths), "found no partition set")
+  expect_error(check_log(paths), "ems_probe")
+})
+
+test_that("singularity without Error lines routes to the probe hint", {
+  paths <- local_solver_log(
+    "MA48: the matrix is singular at step 1"
+  )
+  expect_error(check_log(paths), "Singularity detected")
+  expect_error(check_log(paths), "ems_probe")
+  expect_error(check_log(paths), "structurally deficient closure")
+})
+
+test_that("MA48 rank-deficiency Error lines route to the singularity abort", {
+  for (line in c(
+    "Error: the system matrix is structurally singular: structural rank 989 of 998 (MA48A/AD INFO(1) = -4)",
+    "Error: the system matrix is numerically singular: estimated rank 12874 of 12880 (MA48B/BD INFO(1) = 3)"
+  )) {
+    paths <- local_solver_log(c(line, "probe: diagnosing the failed factorization: condensed system (998 x 998)"))
+    expect_error(check_log(paths), "Singularity detected")
+    expect_error(check_log(paths), "ems_probe")
+  }
+})
+
+test_that("singularity after updated range violations routes to the shock-size hint", {
+  paths <- local_solver_log(c(
+    "Warning: coefficient vxsb has a value below its declared lower bound 0.000000",
+    "LU time 0.10",
+    "Warning: coefficient vfob has an updated value below its declared lower bound 0.000000",
+    "Warning: coefficient evfp has an updated value below its declared lower bound 0.000000",
+    "MA48: the matrix is singular at step 52"
+  ))
+  expect_error(check_log(paths), "Singularity detected")
+  expect_error(check_log(paths), "2 updated-value range warnings")
+  expect_error(check_log(paths), "first: coefficient vfob has an updated value")
+  expect_error(check_log(paths), "n_subintervals")
+  expect_error(check_log(paths), "DoPri54")
+  expect_error(check_log(paths), "ems_probe")
+  expect_no_error(tryCatch(check_log(paths), error = \(e) {
+    expect_false(grepl("structurally deficient", conditionMessage(e)))
+    NULL
+  }))
+})
+
+test_that("initial-data range warnings alone keep the structural singularity hint", {
+  paths <- local_solver_log(c(
+    "Warning: coefficient vxsb has a value below its declared lower bound 0.000000",
+    "MA48: the matrix is singular at step 1"
+  ))
+  expect_error(check_log(paths), "structurally deficient closure")
+})
+
+test_that("cli braces in solver output do not break glue rendering", {
+  paths <- local_solver_log(
+    "Error: malformed formula {unbalanced} in TAB file"
+  )
+  expect_error(check_log(paths), "rejected the model specification")
+})
+
+test_that("a clean log passes and writes the exec record", {
+  paths <- local_solver_log(c(
+    "solver banner",
+    "all steps complete"
+  ))
+  expect_no_error(suppressMessages(check_log(paths)))
+  expect_true(file.exists(file.path(paths$run, "model_exec.txt")))
+})
+
+test_that(".map_solver_errors classifies representative catalog lines", {
+  mapped <- .map_solver_errors(c(
+    "coefficient name max is a reserved word (GEMPACK manual 11.2.1)",
+    "duplicate lower bound on a coefficient declaration (one lower GE/GT and one upper LE/LT allowed)",
+    "only (linear) or (levels) may qualify an equation under Equation (default=levels)",
+    "PostSim Formula assigns variable psave; simulation results cannot be changed (GEMPACK manual 12.2.2)",
+    "set nmrg references itself in a set expression",
+    "element range 'g5 - g2' in set badb runs backwards (GEMPACK manual 11.2.2)",
+    "Read without a header is not supported (use 'Read X from file <log> header \"H\"')",
+    "variable qq is not declared",
+    "zero divided by zero in Formula zdtd while Zerodivide (zero_by_zero) is off",
+    "assertion failed (Assertions = warn/no in the CMF file suppresses/downgrades this abort)",
+    "set product element a_very_long_element_b_very_long_element in the definition of AB exceeds 255 characters",
+    "r is not a coefficient, variable or number and cannot be an arithmetic operand (an index or quoted element compares through $POS, GEMPACK manual 11.5.6/11.4.11)",
+    "coefficient vxsb has an updated value at or below its declared strict lower bound 0.000000"
+  ))
+  expect_identical(
+    mapped$class,
+    c(
+      "tab", "tab", "tab", "tab", "tab", "tab", "tab",
+      "closure", "numeric", "numeric", "tab", "tab", "numeric"
+    )
+  )
+  expect_identical(mapped$manual[13], "25.4.4")
+  expect_identical(mapped$manual[1], "11.2.1")
+  expect_identical(mapped$manual[9], "10.11.1")
+})
+
+test_that(".map_solver_errors classifies the Tier A solver fatals", {
+  mapped <- .map_solver_errors(c(
+    "Formula for c1 reads a later element of c1 along the loop (backward recursion; formulas run forwards through their loops and use the most recent values, GEMPACK manual 16.5(b)/(c) -- copy the coefficient first): (all,t,time2) c1(t) = c1(t+1) + d(t)",
+    "index offset t+nlag is not an integer constant (GEMPACK manual 11.2.4: an offset is index + <integer> or index - <integer>)",
+    "index offset t+1 in k(t+1) runs outside set TIME (at element t10 of TIME; GEMPACK manual 16.4)",
+    "the left-hand side of Formula c1 carries 1 argument(s); c1 is declared with 2 (GEMPACK manual 10.8, 11.4.10): c1(t) = 1",
+    "index offsets are not allowed on the left-hand side of a Formula(Initial) (a Read in later steps; GEMPACK manual 10.8, 11.11.4): c1(t+1) = 1",
+    "the shock statement for pop names component pop(usa), which is endogenous; only exogenous components can be shocked (GEMPACK manual 24, 24.14.1; shock file)",
+    "some components of pop have been specified more than once (pop(usa) is shocked by two statements; shock file)",
+    "initial closure check: 10 endogenous components is not equal to the number of equation rows (11); 20 variable components, 10 exogenous, 0 backsolved -- make 1 more component(s) endogenous (GEMPACK manual 23.2.7)",
+    "BREAK outside any loop (GEMPACK manual 11.18): break x > 1",
+    "a strong comment opened with '![[!' in the TAB file is never closed by '!]]!' (1 still open at the end of the file; GEMPACK manual 11.1.5)",
+    "product Update of vfm: the right-hand side must be a product of percentage-change variables v1*v2*...*vn (GEMPACK manual 11.12.4), and 2 is not one; write a (change) Update for any other form: (all,i,com) vfm(i) = 2*p(i)",
+    "Formula for x gives a value that is not finite (NaN) at x(usa): a division, LOGE, SQRT or power left its domain or the value overflowed (arithmetic error, GEMPACK manual 34.3): x(r) = loge(y(r))",
+    "the linear solve gave a value that is not finite (NaN) for qo(usa): the LHS matrix is singular or badly scaled at this step, or a coefficient overflowed (GEMPACK manual 34.1, 34.3)",
+    "more than 100 equations were not satisfied very accurately (101 warnings); all files are written, but the solution may not be valid (GEMPACK manual 30.6.1)"
+  ))
+  expect_identical(
+    mapped$class,
+    c(rep("tab", 5), rep("closure", 3), rep("tab", 3), rep("numeric", 3))
+  )
+  expect_identical(
+    mapped$manual,
+    c(
+      "16.5", "11.2.4", "16.4", "10.8", "11.11.4",
+      "24.14.1", NA, "23.2.7",
+      "11.18", "11.1.5", "11.12.4",
+      "34.3", "34.1", "30.6.1"
+    )
+  )
+})
+
+test_that(".map_solver_errors classifies the levels linear-name fatals", {
+  mapped <- .map_solver_errors(c(
+    "coefficient c_lc has the name of the linear variable of levels variable lc (GEMPACK manual 9.2.2); rename the coefficient",
+    "variable p_zl has the name of the linear variable of levels variable zl (GEMPACK manual 9.2.2); rename it",
+    "p_x refers to linear variable x; a linear variable is named by itself (p_/c_ names belong to levels variables, GEMPACK manual 9.2.2): equation e_y (all,r,reg) y(r) = p_x(r);",
+    "p_lc: levels variable lc is a change variable; its linear variable is c_lc (GEMPACK manual 9.2.2): equation e_y (all,r,reg) y(r) = p_lc(r);",
+    "LINEAR_VAR=nope of levels variable xl: no linear variable nope is declared before it (GEMPACK manual 9.2.2)",
+    "p_ln names no variable: the linear variable of levels variable ln is xpc (LINEAR_NAME/LINEAR_VAR, GEMPACK manual 9.2.2): equation e_ln (all,r,reg) p_ln(r) = x(r);",
+    "p_y names no variable: y is a linear variable, named y (GEMPACK manual 9.2.2)"
+  ))
+  expect_identical(mapped$class, c(rep("tab", 6), "closure"))
+  expect_identical(mapped$manual, rep("9.2.2", 7))
+})
+
+test_that(".map_solver_errors classifies the -100 percent shock fatals", {
+  mapped <- .map_solver_errors(c(
+    "pxx is shocked by -100 percent, which Gragg's method cannot take: its final pass carries the variable past its end point, through zero (GEMPACK manual 30.2); use the midpoint or Euler method",
+    "pxx is shocked by -120 percent; a percentage change below -100 would make its levels value negative (GEMPACK manual 30.2; shock file)"
+  ))
+  expect_identical(mapped$class, c("closure", "closure"))
+  expect_identical(mapped$manual, c("30.2", "30.2"))
+})
+
+test_that("condest diagnostic lines do not trip the generic scans", {
+  paths <- local_solver_log(c(
+    "solver banner",
+    "condest: backward error omega1 0.00e+00 omega2 0.00e+00 (2 refinement passes), forward error bound 0.00e+00, kappa_w1 3.029e+04, kappa_w2 8.470e+08",
+    "all steps complete"
+  ))
+  expect_no_error(suppressMessages(check_log(paths)))
+})
+
+test_that("memory record lines do not trip the generic scans", {
+  paths <- local_solver_log(c(
+    "solver banner",
+    "memory: after matrix assembly, resident 1.23 GB max per rank, 4.56 GB over 4 rank(s); high-water 1.30 GB max, 4.80 GB sum",
+    "Step time 0.01 s",
+    "memory: after step, resident 1.40 GB max per rank, 5.10 GB over 4 rank(s); high-water 1.45 GB max, 5.30 GB sum",
+    "all steps complete"
+  ))
+  expect_no_error(suppressMessages(check_log(paths)))
+})
+
+test_that("the solve record names the BLAS kernel family the run dispatched", {
+  run_dir <- withr::local_tempdir()
+  stats_dir <- file.path(run_dir, "out", "variables", "bin")
+  dir.create(stats_dir, recursive = TRUE)
+  writeLines("diag", file.path(run_dir, "model_diagnostics.txt"))
+  writeLines(
+    paste0(
+      '{"version": 2, "solver_version": "1.1.0-dev.4", ',
+      '"solution_method": "Johansen", "matrix_method": "LU", ',
+      '"mpi_size": 1, "vecsize": 10, "nexo": 3, ',
+      '"options": {"subintervals": 1, "laA": 300, "laDi": 500, "laD": 200, ',
+      '"fastrefac": false, "max_threads": 1, "blas_core": "Nehalem", ',
+      '"assertions": "warn", "range_test_initial": "warn", ',
+      '"range_test_updated": "warn", "postsim": false}}'
+    ),
+    file.path(stats_dir, "sol.stats.json")
+  )
+  .solve_record_append(run_dir)
+  rec <- readLines(file.path(run_dir, "model_diagnostics.txt"))
+  expect_true(any(grepl("BLAS kernels: Nehalem", rec, fixed = TRUE)))
+})
+
+# an image predating the pin writes no blas_core: the line is dropped
+# rather than rendered empty
+test_that("the solve record omits the BLAS line when the solver did not record one", {
+  run_dir <- withr::local_tempdir()
+  stats_dir <- file.path(run_dir, "out", "variables", "bin")
+  dir.create(stats_dir, recursive = TRUE)
+  writeLines("diag", file.path(run_dir, "model_diagnostics.txt"))
+  writeLines(
+    paste0(
+      '{"version": 2, "solution_method": "Johansen", "matrix_method": "LU", ',
+      '"mpi_size": 1, "vecsize": 10, "nexo": 3, ',
+      '"options": {"subintervals": 1, "laA": 300, "laDi": 500, "laD": 200, ',
+      '"fastrefac": false, "max_threads": 1, "assertions": "warn", ',
+      '"range_test_initial": "warn", "range_test_updated": "warn", ',
+      '"postsim": false}}'
+    ),
+    file.path(stats_dir, "sol.stats.json")
+  )
+  .solve_record_append(run_dir)
+  rec <- readLines(file.path(run_dir, "model_diagnostics.txt"))
+  expect_false(any(grepl("BLAS kernels", rec, fixed = TRUE)))
+})
+
+test_that("the solve record renders the per-phase memory table", {
+  run_dir <- withr::local_tempdir()
+  stats_dir <- file.path(run_dir, "out", "variables", "bin")
+  dir.create(stats_dir, recursive = TRUE)
+  writeLines("diag", file.path(run_dir, "model_diagnostics.txt"))
+  writeLines(
+    paste0(
+      '{"version": 2, "solution_method": "Johansen", "matrix_method": "LU", ',
+      '"mpi_size": 2, "vecsize": 10, "nexo": 3, ',
+      '"options": {"subintervals": 1, "laA": 300, "laDi": 500, "laD": 200, ',
+      '"fastrefac": false, "max_threads": 1, "assertions": "warn", ',
+      '"range_test_initial": "warn", "range_test_updated": "warn", ',
+      '"postsim": false},\n',
+      '  "rss_gb": {\n',
+      '    "variable_calculation": {"max": 0.512, "sum": 0.900, "probes": 1},\n',
+      '    "step": {"max": 1.250, "sum": 2.100, "probes": 3},\n',
+      '    "peak": {"max": 1.300, "sum": 2.200}\n  }\n}'
+    ),
+    file.path(stats_dir, "sol.stats.json")
+  )
+  .solve_record_append(run_dir)
+  rec <- readLines(file.path(run_dir, "model_diagnostics.txt"))
+  expect_true(any(grepl(
+    "Memory (resident GB, max per rank / sum over ranks): variable calculation 0.51/0.90; step 1.25/2.10",
+    rec,
+    fixed = TRUE
+  )))
+  expect_true(any(grepl(
+    "Memory high-water mark: 1.30 GB max per rank, 2.20 GB sum over ranks",
+    rec,
+    fixed = TRUE
+  )))
+})
+
+test_that("condest near-singularity warns without aborting the run", {
+  paths <- local_solver_log(c(
+    "solver banner",
+    "condest: backward error omega1 0.00e+00 omega2 0.00e+00 (0 refinement passes), forward error bound 0.00e+00, kappa_w1 6.179e-02, kappa_w2 1.753e+15",
+    "condest: WARNING: the linear system is numerically near-singular at the current values (kappa_w2 1.8e+15): solutions are unreliable; the structural probe may pass (-solmed probe) -- look for near-zero data flows carried by the closure",
+    "all steps complete"
+  ))
+  expect_warning(
+    suppressMessages(check_log(paths)),
+    "numerically near-singular"
+  )
+  # and the kappa value is surfaced in the warning text
+  expect_warning(
+    suppressMessages(check_log(paths)),
+    "1.8e\\+15"
+  )
+})
+
+test_that("a non-zero exit status aborts even with a clean log", {
+  paths <- local_solver_log(c("solver banner", "Step time 0.01 s"))
+  expect_error(
+    .check_solver_log(
+      elapsed_time = proc.time(),
+      solve_cmd = "cmd",
+      paths = paths,
+      call = NULL,
+      status = 139L
+    ),
+    "exited with status 139"
+  )
+  # a zero status with a clean log passes as before
+  expect_no_error(check_log(paths))
+})
+
+test_that("an interrupted solve aborts by name and clears the solution files", {
+  paths <- local_solver_log(c("solver banner", "Step 3: Jacobian assembled"))
+  bin_dir <- file.path(paths$run, "out", "variables", "bin")
+  dir.create(bin_dir, recursive = TRUE)
+  partial <- file.path(bin_dir, c("sol.bin", "sol.mds"))
+  file.create(partial)
+  for (status in c(130L, 143L)) {
+    expect_error(
+      .check_solver_log(
+        elapsed_time = proc.time(),
+        solve_cmd = "cmd",
+        paths = paths,
+        call = NULL,
+        status = status
+      ),
+      "interrupted"
+    )
+  }
+  expect_false(any(file.exists(partial)))
+})
+
+test_that("an option or manifest statement the image does not know maps to the interface abort", {
+  paths <- local_solver_log(c(
+    "teems-solver 1.1.0-dev.4",
+    "Error: unknown command-line option -subtotals: teems-solver 1.1.0-dev.4 does not read it (teems and its solver image are released together; use the image that matches this teems version, and see docs/solver-reference.md section 11 for the options)"
+  ))
+  expect_error(check_log(paths), "does not accept 1 input that teems sent")
+  expect_error(check_log(paths), "unknown command-line option -subtotals")
+  expect_error(check_log(paths), "released together")
+  paths <- local_solver_log(
+    "Error: unknown statement at line 272 of the manifest (.cmf) file (expected one of iodata, outdata, soldata, tabfile, closure, shock): subtotal \"/opt/teems/sub.sts\";"
+  )
+  expect_error(check_log(paths), "does not accept 1 input that teems sent")
+  expect_error(check_log(paths), "subtotal", fixed = TRUE)
+})
+
+test_that("a misspelt TAB keyword maps to the model-specification abort", {
+  paths <- local_solver_log(
+    "Error: unknown statement keyword 'coeficient' (a statement without a keyword continues the previous coefficient statement, GEMPACK manual 11.1.1, and this one cannot): coeficient (all,r,reg) k8(r) ;"
+  )
+  expect_error(check_log(paths), "rejected the model specification")
+  expect_error(check_log(paths), "11.1.1")
+})
+
+test_that("a data program asked for a Jacobian maps to the model-specification abort", {
+  paths <- local_solver_log(
+    "Error: -jacdump needs a simulation, and this run has none (the TAB has no equations); drop -jacdump or give the TAB its equations and a closure"
+  )
+  expect_error(check_log(paths), "rejected the model specification")
+  expect_error(check_log(paths), "5.1.2")
+  mapped <- .map_solver_errors(c(
+    "-jacdump must be 0 (off), 1 (write <solfiles>.jac) or 2 (write it and stop before the solve), got 3",
+    "subtotals (GEMPACK manual 29) are not available with -solmed nosim, which runs no simulation; use matrix_method LU, SBBD or DBBD with the Johansen, Euler or Gragg method"
+  ))
+  expect_identical(mapped$class, c("interface", "subtotal"))
+})
+
+test_that("shock-group subtotal errors map to the subtotal abort", {
+  paths <- local_solver_log(
+    "Error: element mars is not in set reg (in pop; subtotal \"bad\"; subtotals file)"
+  )
+  expect_error(check_log(paths), "rejected the subtotal \\(shock-group\\) request with 1 error")
+  expect_error(check_log(paths), "element mars is not in set reg", fixed = TRUE)
+  paths <- local_solver_log(
+    "Error: subtotals (GEMPACK manual 29) are not available with matrix_method NDBBD, which cannot keep its factorization for more solves yet; use matrix_method LU, SBBD or DBBD with the Johansen, Euler or Gragg method"
+  )
+  expect_error(check_log(paths), "rejected the subtotal")
+  mapped <- .map_solver_errors(c(
+    "subtotal \"Twice\" is defined twice (subtotals file)",
+    "cannot open subtotals file /opt/teems/sub.sts: No such file or directory",
+    "subtotals (GEMPACK manual 29) are not available in a model with complementarities yet: the approximate and accurate runs change the closure and the states between steps, so the step right-hand sides are not the shocks alone (GEMPACK manual 52)",
+    "this run solves extra right-hand sides with each step's factorization (-fhtest), which matrix_method NDBBD cannot keep yet; use matrix_method LU, SBBD or DBBD",
+    "the manifest (.cmf) file has more than one subtotals statement; put every subtotal in one file"
+  ))
+  expect_identical(mapped$class, c("subtotal", "subtotal", "subtotal", "subtotal", "interface"))
+})
+
+test_that("a state/bound downgrade warning does not abort the run", {
+  paths <- local_solver_log(c(
+    "solver banner",
+    "Warning: 3 complementarity state/bound error(s) after the accurate run (treated as warnings per -comp_sberr_warn; check the log carefully, GEMPACK manual 51.6)"
+  ))
+  expect_no_error(suppressMessages(check_log(paths)))
+})
+
+test_that("an adaptive Runge-Kutta step retried after a singular stage is not a singularity", {
+  paths <- local_solver_log(c(
+    "solver banner",
+    "Step 3: the Jacobian was singular at a stage state, retrying with step size 0.125"
+  ))
+  expect_no_error(suppressMessages(check_log(paths)))
+})
+
+test_that("an unwritable output or scratch file maps to the system abort", {
+  paths <- local_solver_log(
+    "Error: cannot open /opt/teems/out/variables/bin/sol.xac for writing: Permission denied (the solver runs as uid 1000)"
+  )
+  expect_error(check_log(paths), "could not get the disk or memory")
+  paths <- local_solver_log(
+    "Error: short write on scratch file /tmp/_temp0.bin (No space left on device); the scratch filesystem is likely full - free space there or point -tempdir at a larger filesystem"
+  )
+  expect_error(check_log(paths), "could not get the disk or memory")
+})
+
+test_that(".map_solver_errors classifies the Tier C solver fatals", {
+  mapped <- .map_solver_errors(c(
+    "unknown -solmed Mid (valid: Gragg, Midpoint, Euler, RK2, Heun, RK4, BoSha32, DoPri54, Johansen, probe, nosim)",
+    "-convrule 1 applies to a run extrapolating from three solutions without subtotals (GEMPACK manual 26.2.5)",
+    "-nsubints must be at least 1 (got 0)",
+    "linear variables are not permitted inside PROD, MAXS or MINS (GEMPACK manual 11.4.4): prod(c,COMM, x(c))",
+    "malformed condition 's<>r and' (AND, OR and NOT join comparisons; at most 16 comparisons; GEMPACK manual 11.4.5) in sum",
+    "the condition r=s compares two elements (GEMPACK manual 11.4.11) in Formula",
+    "Formula for mapping c2g gives element g9, which is not an element of its codomain grp (GEMPACK manual 11.9.12)",
+    "set builder rb: element x of source set reg is not in v's dimension set comm",
+    "set reg declares 40000 elements, above the 30000 limit; check the element count in its data-file header",
+    "value 9 in the data for mapping c2g is not an element number of set grp (1 to 2; GEMPACK manual 11.9.1c, 11.9.2)",
+    "the refinement step found no kept DBBD factorization for this solve"
+  ))
+  expect_identical(
+    mapped$class,
+    c("interface", "interface", "interface", "tab", "tab", "tab", "tab", "tab", "data", "data", NA)
+  )
+  expect_identical(mapped$manual[4], "11.4.4")
+  expect_identical(mapped$manual[10], "11.9.2")
+})
+

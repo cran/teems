@@ -1,0 +1,25 @@
+#' @importFrom purrr map_chr
+#' @keywords internal
+#' @noRd
+.parse_read_targets <- function(r) {
+  r$name <- purrr::map_chr(strsplit(r$remainder, " "), 1)
+
+  r$remainder <- gsub("from file",
+                      "from file",
+                      r$remainder,
+                      ignore.case = TRUE)
+  r$remainder <- gsub("\\bheader\\s*\"", "header \"", r$remainder, ignore.case = TRUE, perl = TRUE)
+
+  r$remainder <- .advance_remainder(
+    remainder = r$remainder,
+    pattern = paste(r$name, "from file")
+  )
+
+  r$file <- .get_element(input = r$remainder, split = " ", index = 1)
+  r$header <- gsub(
+    pattern = "\"",
+    replacement = "",
+    x = .get_element(input = r$remainder, split = " ", index = 3)
+  )
+  return(r)
+}

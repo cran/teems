@@ -1,6 +1,6 @@
 Package: teems
 Title: Trade and Environment Equilibrium Modeling System
-Version: 0.1.1
+Version: 1.0.0
 Authors@R: c(
     person(
       given = "Matthew",
@@ -40,9 +40,9 @@ URL: https://teemsphere.github.io/,
         https://github.com/teemsphere/teems/
 BugReports: https://github.com/teemsphere/teems/issues
 Depends: R (>= 4.3.0)
-Imports: cli (>= 3.4.0), data.table (>= 1.15.0), purrr (>= 1.0.0), R6
-        (>= 2.4.0), rlang (>= 1.0.0), stats, tibble (>= 3.0.0), tools,
-        utils
+Imports: cli (>= 3.4.0), data.table (>= 1.15.0), graphics, grDevices,
+        jsonlite (>= 1.8.0), purrr (>= 1.0.0), R6 (>= 2.4.0), rlang (>=
+        1.0.0), stats, tibble (>= 3.0.0), tools, utils
 Suggests: testthat (>= 3.0.0), withr (>= 3.0.0)
 LinkingTo: cpp11
 Config/testthat/edition: 3
@@ -51,7 +51,7 @@ Language: en-US
 RoxygenNote: 7.3.3
 SystemRequirements: Docker (https://www.docker.com)
 NeedsCompilation: yes
-Packaged: 2026-06-10 02:37:44 UTC; mpc
+Packaged: 2026-10-17 20:02:49 UTC; mpc
 Author: Matthew Cantele [aut, cre, cph] (ORCID:
     <https://orcid.org/0000-0003-3729-1764>),
   Tom Kompas [ctb, ths] (ORCID: <https://orcid.org/0000-0002-0665-0966>),
@@ -59,4 +59,4 @@ Author: Matthew Cantele [aut, cre, cph] (ORCID:
   Martin Ingram [ctb] (ORCID: <https://orcid.org/0000-0001-6269-8342>)
 Maintainer: Matthew Cantele <matthew.cantele@protonmail.com>
 Repository: CRAN
-Date/Publication: 2026-06-17 14:10:03 UTC
+Date/Publication: 2026-10-17 20:30:02 UTC

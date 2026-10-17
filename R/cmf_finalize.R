@@ -1,11 +1,12 @@
 #' @importFrom purrr map_chr
-#'
+#' @importFrom tools file_path_sans_ext
 #' @keywords internal
 #' @noRd
 .finalize_cmf <- function(model,
                           shock_file,
                           tab_file,
-                          cls_file) {
+                          cls_file,
+                          write_coefficients = FALSE) {
 
   write_dir   <- normalizePath(.o_tempdir(), "/")
   input_names <- paste0(unique(model[!is.na(model$file), "file"][[1]]))
@@ -14,7 +15,7 @@
 
   tab_path <- file.path(write_dir, tab_file)
   cls_path <- file.path(write_dir, cls_file)
-  cmf_path <- sub("\\.tab", "\\.cmf", tab_path)
+  cmf_path <- paste0(tools::file_path_sans_ext(tab_path), ".cmf")
   shf_path <- file.path(write_dir, shock_file)
   
   cmf_comp <- c(
@@ -24,7 +25,8 @@
   )
 
   writeout <- .writeout(model = model,
-                        write_dir = write_dir)
+                        write_dir = write_dir,
+                        coeff = write_coefficients)
 
   input_data <- paste(
     "iodata",
@@ -45,7 +47,7 @@
     writeout
   )
 
-  cmf <- purrr::map_chr(cmf, function(c) {
+  cmf <- purrr::map_chr(cmf, \(c) {
     gsub(write_dir, "/opt/teems", c, fixed = TRUE)
   })
 

@@ -19,7 +19,7 @@ partial <- ems_uniform_shock(
   var = "qfd",
   REGs = "usa",
   PROD_COMMj = "crops",
-  value = -1
+  value = -0.1
 )
 
 # prepare a partial closure swap making qfd subset exogenous
@@ -49,14 +49,15 @@ cmf_path <- ems_deploy(
 outputs <- ems_solve(
   cmf_path = cmf_path,
   matrix_method = "LU",
-  solution_method = "Johansen"
+  solution_method = "Gragg"
 )
 
 # checks
-exo_shk <- outputs$dat$qfd[REGs == "usa" & PROD_COMMj == "crops"]$Value == -1
+# multi-step solutions carry rounding, so values are compared within a tolerance
+exo_shk <- abs(outputs$dat$qfd[REGs == "usa" & PROD_COMMj == "crops"]$Value + 0.1) < 1e-6
 endo1 <- outputs$dat$qfd[!(REGs == "usa" & PROD_COMMj == "crops")]$Value != 0
 endo2 <- outputs$dat$tfd[REGr == "usa" & PROD_COMMj == "crops"]$Value != 0
-exo_null <- outputs$dat$tfd[!(REGr == "usa" & PROD_COMMj == "crops")]$Value == 0
+exo_null <- abs(outputs$dat$tfd[!(REGr == "usa" & PROD_COMMj == "crops")]$Value) < 1e-6
 qfd_len_check <- (length(exo_shk) + length(endo1)) == nrow(outputs$dat$qfd)
 tfd_len_check <- (length(endo2) + length(exo_null)) == nrow(outputs$dat$tfd)
 checks <- c(exo_shk, endo1, endo2, exo_null, qfd_len_check, tfd_len_check)

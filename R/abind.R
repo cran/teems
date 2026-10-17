@@ -1,12 +1,8 @@
-#' @note This function is a stripped down version of abind::abind
-#'   and has been adopted and modified as such to avoid importing
-#'   the abind package for a single function.
-#'
 #' @keywords internal
 #' @noRd
 .abind <- function(..., along = N) {
   arg.list <- list(...)
-  N <- max(1, sapply(list(...), function(x) length(dim(x))))
+  N <- max(1, sapply(list(...), \(x) length(dim(x))))
   have.list.arg <- FALSE
 
   pre <- seq(from = 1, length.out = along - 1)

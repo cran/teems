@@ -61,16 +61,18 @@ test_that("ems_model rejects non-existent closure_file", {
   expect_snapshot_error(ems_model(model_file, "not_a_file"))
 })
 
-test_that("ems_model rejects non-character var_omit", {
-  expect_snapshot_error(ems_model(model_file, closure_file, 1))
-})
-
-test_that("ems_model rejects invalid variable names in var_omit", {
-  expect_snapshot_error(ems_model(model_file, closure_file, "not_a_var"))
-})
-
 test_that("ems_model rejects invalid coefficient arguments", {
   expect_snapshot_error(ems_model(model_file, closure_file, NOT_A_COEFF = 2))
+})
+
+test_that("a value for a coefficient that is neither read nor assigned aborts", {
+  # declared coefficients pass the pre-flight without a Read or Formula;
+  # a user value for one has nowhere to go
+  err_model <- write_modified_model(
+    model_file,
+    "Coefficient (all,r,REG) TESTC(r) # declared but never assigned #;"
+  )
+  expect_snapshot_error(ems_model(err_model, closure_file, TESTC = 1))
 })
 
 test_that("ems_model returns valid tibble", {
@@ -109,6 +111,16 @@ test_that("aggregated numeric to a read", {
 
   expect_true(model[grepl("ETRAQ", model$comp1), ]$comp2 == -4.321)
   expect_true(grepl("-4.321", model[grepl("ETRAQ", model$comp1), ]$tab))
+})
+
+test_that("numerics reach the TAB text as plain decimals (A7a)", {
+  model <- ems_model(model_file, closure_file, KAPPA = 1e-5, ETRAQ = -2.5e-7)
+  kappa <- model[grepl("KAPPA", model$comp1), ]$tab
+  etraq <- model[grepl("ETRAQ", model$comp1), ]$tab
+  expect_true(grepl("= 0.00001;", kappa, fixed = TRUE))
+  expect_true(grepl("= -0.00000025;", etraq, fixed = TRUE))
+  expect_false(any(grepl("[0-9][eE][-+]?[0-9]", c(kappa, etraq))))
+  expect_identical(.tab_number(c(1 / 3, 123456.789, 1e20)), c("0.333333333333333", "123456.789", "100000000000000000000"))
 })
 
 test_that("aggregated data frame to a read", {
@@ -210,18 +222,40 @@ test_that("aggregated csv to a formula", {
 })
 
 
-test_that("ignored tab statement", {
-  wrn_model <- write_modified_model(model_file, "POSTSIM (BEGIN) ;")
-  expect_snapshot_warning(ems_model(wrn_model, closure_file))
+test_that("unbalanced PostSim markers", {
+  err_model <- write_modified_model(model_file, "POSTSIM (BEGIN) ;")
+  expect_snapshot_error(ems_model(err_model, closure_file))
 })
 
 test_that("invalid tab statement", {
-  err_model <- write_modified_model(model_file, "OMIT  a1  a1oct  a1mar  a1_s  a2  a2mar  ;")
+  err_model <- write_modified_model(model_file, "DISPLAY VKB ;")
   expect_snapshot(ems_model(err_model, closure_file),
                   error = TRUE,
                   transform = function(lines) {
                     gsub(utils::packageVersion("teems"), "version_number", lines)
                   },)
+})
+
+test_that("loops and sets without named elements pass ems_model", {
+  loop_model <- write_modified_model(model_file, paste(
+    "Set LIT (k1 - k6);",
+    "Set LUN # unnamed # size 4;",
+    "Coefficient (all,k,LIT) LFILL(k);",
+    "Formula (all,k,LIT) LFILL(k) = 0;",
+    "Coefficient LACC;",
+    "Formula LACC = 0;",
+    "Loop (BEGIN, name=outer) (all,k,LIT);",
+    "Formula LACC = LACC + $POS(k);",
+    "Formula LFILL(k) = LACC;",
+    "Cycle (any) (all,u,LUN) LACC < 0;",
+    "Break LFILL(k) = 10;",
+    "Loop (END);",
+    sep = "\n"
+  ))
+  model <- ems_model(loop_model, closure_file)
+  expect_identical(sum(model$type == "Loop"), 2L)
+  expect_identical(sum(model$type == "Break"), 1L)
+  expect_identical(sum(model$type == "Cycle"), 1L)
 })
 
 test_that("invalid intertemporal header", {
@@ -248,7 +282,7 @@ test_that("invalid read statement", {
   expect_snapshot_error(ems_model(err_model, closure_file))
 })
 
-test_that("invalid binary set switch statement", {
+test_that("a set builder on an undeclared/unread coefficient aborts", {
   err_model <- write_modified_model(
     model_file,
     "Set ENDWM # mobile endowments # = (all,e,ENDW:ENDOWFLAG(e,\"mobile\") ne 0);"
@@ -256,8 +290,21 @@ test_that("invalid binary set switch statement", {
   expect_snapshot_error(ems_model(err_model, closure_file))
 })
 
-test_that("identical set assignment", {
-  err_model <- write_modified_model(model_file, "Set ENDWM2 # mobile endowments 2 # = ENDWM;")
+test_that("set equality (GEMPACK manual 10.1.2.1)", {
+  ok_model <- write_modified_model(model_file, "Set ENDWM2 # mobile endowments 2 # = ENDWM;")
+  expect_s3_class(
+    ems_model(ok_model, closure_file),
+    "data.frame"
+  )
+})
+
+test_that("intertemporal set equality", {
+  err_model <- write_modified_model(model_file, "Set ALLTIME2 # all time copy # = ALLTIME;")
+  expect_snapshot_error(ems_model(err_model, closure_file))
+})
+
+test_that("unparseable set definition", {
+  err_model <- write_modified_model(model_file, "Set BADSET # bad definition # = ENDWM ENDWS;")
   expect_snapshot_error(ems_model(err_model, closure_file))
 })
 
@@ -270,11 +317,589 @@ test_that("invalid set qualifier", {
 })
 
 test_that("multiple set operators", {
-  err_model <- write_modified_model(
+  ok_model <- write_modified_model(
     model_file,
     "Set ENDWCFS # multiple op # = ENDWC + ENDWF + ENDWS;"
   )
+  expect_no_error(ems_model(ok_model, closure_file))
+})
+
+test_that("conditional set builders (GEMPACK manual 10.1.3)", {
+  # the accepted shapes parse; the source set becomes the implied
+  # superset and the statement is kept verbatim for the solver
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      'Set COMMX # builder, quoted args # = (all,c,COMM: VDFB(c,"crops","chn","t0") > 0);',
+      "Set COMMY # builder, word op # = (all,c,COMM: VDFB(c,\"crops\",\"chn\",\"t0\") GE 0);",
+      "Coefficient (all,a,ACTS) ACW(a) # activity weights #;",
+      'Read ACW from file GTAPDATA header "ACW";',
+      "Set COMMZ # builder, mapping sum # = (all,c,COMM: sum{a,ACTS: MAPCA(a) = c, ACW(a)} > 0);",
+      "Mapping MAPCA from ACTS to COMM;",
+      'Read (by_elements) MAPCA from file GTAPSETS header "MAPC";',
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  sb <- model[model$name %in% c("COMMX", "COMMY", "COMMZ"), ]
+  expect_equal(sb$comp1, rep("COMM", 3L))
+  expect_true(all(grepl("^= \\(all,c,COMM: ", unlist(sb$definition))))
+  expect_true(any(grepl('COMMX # builder, quoted args # = (all,c,COMM: VDFB(c,"crops","chn","t0") > 0)', model$tab, fixed = TRUE)))
+  comm <- model[which(model$name %in% "COMM"), ]
+  expect_true(all(c("COMMX", "COMMY", "COMMZ") %in% comm$subsets[[1]]))
+
+  # compound conditions, coefficient comparisons and Formula operands
+  # are evaluated at deploy through an injected indicator
+  fb_model <- ems_model(
+    write_modified_model(
+      model_file,
+      paste(
+        'Set CMPX = (all,c,COMM: VDFB(c,"crops","chn","t0") > 0 and VDFB(c,"food","chn","t0") > 0);',
+        'Set CMPY = (all,c,COMM: VDFB(c,"crops","chn","t0") > VDB(c,"chn","t0"));',
+        'Set CMPZ = (all,c,COMM: VDB(c,"chn","t0") > 0);',
+        sep = "\n"
+      )
+    ),
+    closure_file
+  )
+  sb <- attr(fb_model, "set_builders")
+  expect_identical(unname(purrr::map_chr(sb, "set")), c("CMPX", "CMPY", "CMPZ"))
+  expect_identical(sb[[3]]$cond, 'VDB(c,"chn","t0") > 0')
+  expect_true(any(grepl("Set CMPZ = (all,c,COMM: SBI03(c) > 0.5);", fb_model$tab, fixed = TRUE)))
+  expect_true(any(grepl('Read SBI03 from file GTAPDATA header "SB03";', fb_model$tab, fixed = TRUE)))
+
+  # a condition that does not parse, or names nothing declared, is named
+  expect_snapshot_error(ems_model(
+    write_modified_model(model_file, 'Set BADX = (all,c,COMM: VDFB(c,"crops","chn","t0") > 0 and);'),
+    closure_file
+  ))
+  expect_snapshot_error(ems_model(
+    write_modified_model(model_file, 'Set BADX = (all,c,COMM: VDFB(c,"crops","chn","t0") > NOPE(c));'),
+    closure_file
+  ))
+})
+
+test_that("set builders on indicator-formula operands (GTAP-AEZ UNITD* shape)", {
+  # an indicator is assigned constants only: the IF rewrite leaves a
+  # constant base formula plus a constant accumulate over the subset
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Set RSUB # one region # (chn);",
+      "Subset RSUB is subset of REG;",
+      "Coefficient (all,r,REG) UNITR(r) # indicator #;",
+      "Formula (all,r,REG) UNITR(r) = 0.0 + IF[r in RSUB, 1.0];",
+      "Set BLOC # blocs # (b1);",
+      "Mapping MAPRB from REG to BLOC;",
+      'Read (by_elements) MAPRB from file GTAPSETS header "MRB";',
+      "Set RB # blocs holding chn # = (all,b,BLOC: sum{r,REG: MAPRB(r) = b, UNITR(r)} > 0);",
+      "Set RR # indicator-selected regions # = (all,r,REG: UNITR(r) > 0.5);",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  steps <- .indicator_formulas(model, "UNITR")
+  expect_length(steps, 2L)
+  expect_equal(purrr::map_chr(steps, "mode"), c("set", "add"))
+  expect_equal(purrr::map_chr(steps, "set"), c("REG", "RSUB"))
+  expect_equal(purrr::map_dbl(steps, "value"), c(0, 1))
+  maps <- list(REG = data.table::data.table(origin = c("chn", "row", "usa"), mapping = c("chn", "row", "usa")), RSUB = data.table::data.table(origin = "chn", mapping = "chn"))
+  expect_equal(.eval_indicator(steps, c("chn", "row", "usa"), maps), c(chn = 1, row = 0, usa = 0))
+  # unresolved step set: pending
+  expect_null(.eval_indicator(steps, c("chn", "row"), maps["REG"]))
+  # a non-constant formula is not an indicator: it is evaluated at deploy
+  fx_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,r,REG) UNITX(r) # not an indicator #;",
+      'Formula (all,r,REG) UNITX(r) = VDB("crops",r,"t0");',
+      "Set RX = (all,r,REG: UNITX(r) > 0);",
+      sep = "\n"
+    )
+  )
+  fx <- ems_model(fx_model, closure_file)
+  expect_identical(attr(fx, "set_builders")[[1]]$set, "RX")
+  # the source set must be declared
+  expect_snapshot_error(ems_model(
+    write_modified_model(model_file, 'Set BADX = (all,c,NOSET: VDFB(c,"crops","chn","t0") > 0);'),
+    closure_file
+  ))
+})
+
+test_that("a Set built from an excluded coefficient aborts", {
+  # ENDOWFLAG "EFLG" is in the default full_exclude: the upstream
+  # GTAPv7 ENDWM/ENDWS builders cannot be evaluated
+  err_model <- write_modified_model(
+    model_file,
+    paste(
+      "Set ENDWT # endowment types # (mobile, sluggish);",
+      "Coefficient (all,e,ENDW)(all,k,ENDWT) ENDOWFLAG(e,k) # flags #;",
+      'Read ENDOWFLAG from file GTAPDATA header "EFLG";',
+      'Set ENDWMX # mobile # = (all,e,ENDW: ENDOWFLAG(e,"mobile") ne 0);',
+      sep = "\n"
+    )
+  )
   expect_snapshot_error(ems_model(err_model, closure_file))
+})
+
+test_that("set products, $POS and formula-assigned mappings load (manual 10.1.6, 11.5.6, 10.13.1)", {
+  # the upstream GTAPv7 welfare-report shape: unit-set products, a
+  # mapping assigned by a $POS formula, a (project) mapping
+  model <- ems_model(
+    write_modified_model(
+      model_file,
+      paste(
+        "Set UNITX (c);",
+        "Set XCOM = UNITX x COMM;",
+        "Mapping XCOMX from XCOM to COMM;",
+        "Formula (all,c,XCOM) XCOMX(c) = $POS(c);",
+        "Mapping (project) XCOMXP from XCOM to COMM;",
+        "Coefficient (all,c,XCOM)(all,t,ALLTIME) UPOS(c,t) # position #;",
+        "Formula (all,c,XCOM)(all,t,ALLTIME) UPOS(c,t) = $POS(c) + $POS(XCOMXP(c),COMM);",
+        sep = "\n"
+      )
+    ),
+    closure_file
+  )
+  expect_true("XCOM" %in% model$name[model$type == "Set"])
+  expect_identical(
+    model$qualifier_list[model$type == "Mapping" & model$name == "XCOMXP"],
+    "(project)"
+  )
+  expect_true(any(grepl("$POS(c)", model$tab, fixed = TRUE)))
+})
+
+test_that("set expressions parse (GEMPACK manual 10.1.1.1)", {
+  expr_model <- write_modified_model(
+    model_file,
+    paste(
+      "Set TESTA # three-term plus # = ENDWC + ENDWF + ENDWS;",
+      "Set TESTB # brackets with intersect # = (ENDW - ENDWC) INTERSECT ENDWMS;",
+      'Set TESTC # union with quoted elements # = ENDWF UNION "land" UNION "capital";',
+      sep = "\n"
+    )
+  )
+  expect_no_error(ems_model(expr_model, closure_file))
+})
+
+test_that("IF in formula RHS (GEMPACK manual 11.4.6)", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFTESTA(c,r,t) # if in-set #;",
+      "Formula (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFTESTA(c,r,t) = VDB(c,r,t) + IF[c in MARG, VST(c,r,t)];",
+      "Coefficient (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFTESTB(c,r,t) # if comparison #;",
+      "Formula (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFTESTB(c,r,t) = 1 + IF[VDB(c,r,t) gt 0, VDB(c,r,t)];",
+      "Coefficient (all,r,REG)(all,t,ALLTIME) IFTESTC(r,t) # if element #;",
+      'Formula (all,r,REG)(all,t,ALLTIME) IFTESTC(r,t) = IF[r="chn", VTRPROV(r,t)];',
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  expect_s3_class(model, "data.frame")
+  # a declared subset narrows to itself; an element condition
+  # synthesizes a singleton intersection set
+  expect_true(any(grepl("(all,c,MARG)(all,r,REG)(all,t,ALLTIME) IFTESTA(c,r,t) = IFTESTA(c,r,t) + [VST(c,r,t)]", model$tab, fixed = TRUE)))
+  expect_false(any(grepl("MARG & COMM", model$tab, fixed = TRUE)))
+  chn <- sub("^Set (IFS[0-9]+) .*$", "\\1", grep('= "chn" & REG', model$tab, fixed = TRUE, value = TRUE))
+  expect_match(chn, "^IFS[0-9]+$")
+  expect_true(any(grepl(paste0("(all,r,", chn, ")(all,t,ALLTIME) IFTESTC(r,t) = IFTESTC(r,t) + [VTRPROV(r,t)]"), model$tab, fixed = TRUE)))
+})
+
+test_that("nested IF terms rewrite recursively (GTAP-AEZ shapes)", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      # the AEZ calibration shape: self-referencing target, comparison
+      # IFs nested in a membership branch
+      "Coefficient (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFSELF(c,r,t) # self-referencing #;",
+      "Formula (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFSELF(c,r,t) = VDB(c,r,t);",
+      "Formula (initial) (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFSELF(c,r,t) = IF[c in NMRG, IFSELF(c,r,t)] + IF[c in MARG, IF[VDB(c,r,t)*VMPB(c,r,t) LE 0, IFSELF(c,r,t)] + IF[VDB(c,r,t)*VMPB(c,r,t) GT 0, 7]];",
+      # the AEZ E_qfe shape: membership on a second index inside a
+      # membership branch, a comparison innermost
+      "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) ifnest(c,r,t) # nested #;",
+      'Equation E_ifnest (all,c,COMM)(all,r,REG)(all,t,ALLTIME) ifnest(c,r,t) = pds(c,r,t) + IF[c in MARG, IF[r="chn", IF[VDB(c,r,t) gt 0, qst(c,r,t)]]];',
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  tab <- model$tab
+  # the pre-assignment values are read through a copy declared like
+  # the target and assigned under the host qualifier
+  expect_true(any(grepl("Coefficient (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFT1(c,r,t) # if-rewrite copy of IFSELF #", tab, fixed = TRUE)))
+  expect_true(any(grepl("Formula (initial) (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFT1(c,r,t) = IFSELF(c,r,t)", tab, fixed = TRUE)))
+  expect_true(any(grepl("Formula (initial)(all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFSELF(c,r,t) = 0;", tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,c,NMRG)(all,r,REG)(all,t,ALLTIME) IFSELF(c,r,t) = IFSELF(c,r,t) + [IFT1(c,r,t)]", tab, fixed = TRUE)))
+  # the nested comparisons ride conditional quantifiers on the
+  # narrowed statement; the helper inherits (initial)
+  hx <- sub("^Formula \\(initial\\) \\(all,c,MARG\\)\\(all,r,REG\\)\\(all,t,ALLTIME\\) (IFX[0-9]+)\\(c,r,t\\) = VDB\\(c,r,t\\)\\*VMPB\\(c,r,t\\);$", "\\1", grep("IFX[0-9]+\\(c,r,t\\) = VDB\\(c,r,t\\)\\*VMPB", tab, value = TRUE))
+  hx <- hx[grepl("^IFX[0-9]+$", hx)]
+  expect_length(hx, 1L)
+  expect_true(any(grepl(paste0("(all,c,MARG)(all,r,REG)(all,t,ALLTIME: ", hx, "(c,r,t) <= 0) IFSELF(c,r,t) = IFSELF(c,r,t) + [IFT1(c,r,t)]"), tab, fixed = TRUE)))
+  expect_true(any(grepl(paste0("(all,c,MARG)(all,r,REG)(all,t,ALLTIME: ", hx, "(c,r,t) > 0) IFSELF(c,r,t) = IFSELF(c,r,t) + [7]"), tab, fixed = TRUE)))
+  # no accumulate statement without an assignment
+  expect_false(any(grepl("IFSELF(c,r,t) = IFSELF(c,r,t);", tab, fixed = TRUE)))
+  # the equation partitions on c, then on r, then gates on the data
+  eqs <- grep("^Equation E_ifnest", tab, value = TRUE)
+  expect_true(all(c("E_ifnestAA", "E_ifnestAB", "E_ifnestB") %in% model$name))
+  aa <- eqs[grepl("^Equation E_ifnestAA ", eqs)]
+  expect_match(aa, "(all,c,MARG)(all,r,IFS", fixed = TRUE)
+  expect_match(aa, "= pds(c,r,t) + IFC", fixed = TRUE)
+  expect_match(aa, "* qst(c,r,t);", fixed = TRUE)
+  expect_true(any(grepl("^Equation E_ifnestAB .*\\(all,c,MARG\\)\\(all,r,IFS[0-9]+\\)\\(all,t,ALLTIME\\) ifnest\\(c,r,t\\) = pds\\(c,r,t\\);$", eqs)))
+  expect_true(any(grepl("^Equation E_ifnestB .*\\(all,c,IFS[0-9]+\\)\\(all,r,REG\\)\\(all,t,ALLTIME\\) ifnest\\(c,r,t\\) = pds\\(c,r,t\\);$", eqs)))
+  expect_false(any(grepl("IF\\[", eqs)))
+})
+
+test_that("expression IF conditions (LULC shape, manual 11.4.5/11.4.6)", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFXT(c,r,t) # expr cond #;",
+      "Formula (initial) (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFXT(c,r,t) = IF[VDB(c,r,t)*VMPB(c,r,t) <= 0, VDB(c,r,t)] + IF[VDB(c,r,t)*VMPB(c,r,t) > 0, VMPB(c,r,t)/[VDB(c,r,t) + 1]];",
+      "Coefficient (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFXU(c,r,t) # two-sided expr cond #;",
+      "Formula (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFXU(c,r,t) = IF[VDB(c,r,t) GE VMPB(c,r,t) + VDPB(c,r,t), 1];",
+      "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) ifxv(c,r,t) # expr cond in an equation #;",
+      "Equation E_ifxv (all,c,COMM)(all,r,REG)(all,t,ALLTIME) ifxv(c,r,t) = IF[VDB(c,r,t)*VMPB(c,r,t) > 0, pds(c,r,t)];",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  tab <- model$tab
+  # one shared helper for the two <= 0 / > 0 terms, inheriting (initial)
+  h1 <- tab[grepl("Formula (initial) (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFX1(c,r,t) = VDB(c,r,t)*VMPB(c,r,t)", tab, fixed = TRUE)]
+  expect_length(h1, 1L)
+  expect_true(any(grepl("(all,t,ALLTIME: IFX1(c,r,t) <= 0) IFXT(c,r,t) = IFXT(c,r,t) + [VDB(c,r,t)]", tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,t,ALLTIME: IFX1(c,r,t) > 0) IFXT(c,r,t) = IFXT(c,r,t) + [VMPB(c,r,t)/[VDB(c,r,t) + 1]]", tab, fixed = TRUE)))
+  # two-sided comparison: helper = lhs - rhs against 0, (always) like its host
+  h2 <- tab[grepl("Formula (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFX2(c,r,t) = [VDB(c,r,t)] - [VMPB(c,r,t) + VDPB(c,r,t)]", tab, fixed = TRUE)]
+  expect_length(h2, 1L)
+  expect_true(any(grepl("(all,t,ALLTIME: IFX2(c,r,t) >= 0) IFXU(c,r,t)", tab, fixed = TRUE)))
+  # an Equation host: (always) helper + the indicator route
+  h3 <- tab[grepl("Formula (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFX3(c,r,t) = VDB(c,r,t)*VMPB(c,r,t)", tab, fixed = TRUE)]
+  expect_length(h3, 1L)
+  # the indicator's number follows the fixture's own IF equations
+  ind <- sub("^.*= (IFC[0-9]+)\\(c,r,t\\) \\* pds\\(c,r,t\\);.*$", "\\1", grep("E_ifxv", tab, fixed = TRUE, value = TRUE))
+  expect_match(ind, "^IFC[0-9]+$")
+  expect_true(any(grepl("IFX3(c,r,t) > 0", tab[grepl(paste0("^Formula .*", ind, "\\("), tab)], fixed = TRUE)))
+  expect_true(all(c("IFX1", "IFX2", "IFX3", ind) %in% model$name))
+
+  # a variable inside a condition is named
+  expect_snapshot_error(ems_model(
+    write_modified_model(
+      model_file,
+      paste(
+        "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) ifbad(c,r,t) # bad #;",
+        "Equation E_ifbad (all,c,COMM)(all,r,REG)(all,t,ALLTIME) ifbad(c,r,t) = IF[VDB(c,r,t)*pds(c,r,t) > 0, pds(c,r,t)];",
+        sep = "\n"
+      )
+    ),
+    closure_file
+  ))
+})
+
+test_that("AND/OR/NOT conditions reach the solver as conditions (manual 11.4.5)", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFCMP(c,r,t) # compound IF #;",
+      "Formula (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFCMP(c,r,t) = IF[VDB(c,r,t) > 0 and not VDPB(c,r,t) > 0, VDB(c,r,t)];",
+      "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) ifcv(c,r,t) # compound IF in an equation #;",
+      "Equation E_ifcv (all,c,COMM)(all,r,REG)(all,t,ALLTIME) ifcv(c,r,t) = IF[VDB(c,r,t) > 0 or r = \"usa\", pds(c,r,t)];",
+      "Set BLOC (blk1, blk2);",
+      "Mapping (onto) RTOB from REG to BLOC;",
+      "Read (by_elements) RTOB from file GTAPSETS header \"MBLC\";",
+      "Variable (all,b,BLOC)(all,s,REG)(all,t,ALLTIME) blocv(b,s,t) # index compound in a sum #;",
+      "Equation E_blocv (all,b,BLOC)(all,s,REG)(all,t,ALLTIME) blocv(b,s,t) = sum{r,REG: [RTOB(r) = b] and [r <> s], VTRPROV(r,t)*pds(\"food\",r,t)};",
+      "Coefficient (all,b,BLOC)(all,t,ALLTIME) BLOCC(b,t) # coefficient compound in a sum #;",
+      "Formula (all,b,BLOC)(all,t,ALLTIME) BLOCC(b,t) = sum{r,REG: [RTOB(r) = b] or [VTRPROV(r,t) > 0], VTRPROV(r,t)};",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  tab <- model$tab
+  # a Formula IF: the compound becomes the last quantifier's condition
+  expect_true(any(grepl("(all,t,ALLTIME: VDB(c,r,t) > 0 and not VDPB(c,r,t) > 0) IFCMP(c,r,t) = IFCMP(c,r,t) + [VDB(c,r,t)]", tab, fixed = TRUE)))
+  # an Equation IF: an indicator set by the compound condition
+  ind <- sub("^.*= (IFC[0-9]+)\\(c,r,t\\) \\* pds\\(c,r,t\\);.*$", "\\1", grep("E_ifcv", tab, fixed = TRUE, value = TRUE))
+  expect_match(ind, "^IFC[0-9]+$")
+  expect_true(any(grepl(paste0("(all,t,ALLTIME: VDB(c,r,t) > 0 or r = \"usa\") ", ind, "(c,r,t) = 1"), tab, fixed = TRUE)))
+  # comparisons of indices and mappings only: the sum keeps its condition
+  expect_true(any(grepl("sum{r,REG: [RTOB(r) = b] and [r <> s], VTRPROV(r,t)*pds(\"food\",r,t)}", tab, fixed = TRUE)))
+  # a coefficient leaf: the sum-condition indicator route
+  expect_true(any(grepl("(all,r,REG: [RTOB(r) = b] or [VTRPROV(r,t) > 0])", tab, fixed = TRUE)))
+  expect_false(any(grepl("BLOCC(b,t) = sum{r,REG:", tab, fixed = TRUE)))
+})
+
+test_that("index, element and mapping IF comparisons take the $POS route (manual 11.4.11)", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,r,REG)(all,s,REG)(all,t,ALLTIME) IFI1(r,s,t) # index EQ index #;",
+      "Formula (all,r,REG)(all,s,REG)(all,t,ALLTIME) IFI1(r,s,t) = IF[r EQ s, VTRPROV(r,t)];",
+      "Coefficient (all,c,COMM)(all,m,MARG) IFI2(c,m) # index over a subset #;",
+      "Formula (all,c,COMM)(all,m,MARG) IFI2(c,m) = IF[c ne m, 1];",
+      "Coefficient (all,r,REG) IFI3(r) # index <> element #;",
+      "Formula (all,r,REG) IFI3(r) = IF[r <> \"usa\", 1] + IF[\"usa\" EQ r, 10];",
+      "Set BLOC (blk1, blk2);",
+      "Mapping (onto) RTOB from REG to BLOC;",
+      "Read (by_elements) RTOB from file GTAPSETS header \"MBLC\";",
+      "Coefficient (all,r,REG)(all,b,BLOC) IFI4(r,b) # mapping EQ index #;",
+      "Formula (all,r,REG)(all,b,BLOC) IFI4(r,b) = IF[RTOB(r) = b, 1];",
+      "Coefficient (all,t,ALLTIME)(all,u,ALLTIME) IFI5(t,u) # ordered on an intertemporal set #;",
+      "Formula (all,t,ALLTIME)(all,u,ALLTIME) IFI5(t,u) = IF[t <= u, 1];",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  tab <- model$tab
+  expect_true(any(grepl("IFX1(r,s) = [$POS(r)] - [$POS(s)]", tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,t,ALLTIME: IFX1(r,s) = 0) IFI1(r,s,t)", tab, fixed = TRUE)))
+  expect_true(any(grepl("IFX2(c,m) = [$POS(c)] - [$POS(m,COMM)]", tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,m,MARG: IFX2(c,m) <> 0) IFI2(c,m)", tab, fixed = TRUE)))
+  expect_true(any(grepl("IFX3(r) = [$POS(r)] - [$POS(\"usa\",REG)]", tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,r,REG: IFX3(r) <> 0) IFI3(r) = IFI3(r) + [1]", tab, fixed = TRUE)))
+  expect_true(any(grepl("IFX4(r) = [$POS(\"usa\",REG)] - [$POS(r)]", tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,r,REG: IFX4(r) = 0) IFI3(r) = IFI3(r) + [10]", tab, fixed = TRUE)))
+  expect_true(any(grepl("IFX5(r,b) = [$POS(RTOB(r))] - [$POS(b)]", tab, fixed = TRUE)))
+  expect_true(any(grepl("IFX6(t,u) = [$POS(t)] - [$POS(u)]", tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,u,ALLTIME: IFX6(t,u) <= 0) IFI5(t,u)", tab, fixed = TRUE)))
+
+  # an index against a number is not a data comparison
+  expect_snapshot_error(ems_model(
+    write_modified_model(
+      model_file,
+      paste(
+        "Coefficient (all,r,REG) IFBAD(r) # bad #;",
+        "Formula (all,r,REG) IFBAD(r) = IF[r > 3, 1];",
+        sep = "\n"
+      )
+    ),
+    closure_file
+  ))
+  # unrelated sets
+  expect_snapshot_error(ems_model(
+    write_modified_model(
+      model_file,
+      paste(
+        "Coefficient (all,r,REG)(all,c,COMM) IFBAD(r,c) # bad #;",
+        "Formula (all,r,REG)(all,c,COMM) IFBAD(r,c) = IF[r EQ c, 1];",
+        sep = "\n"
+      )
+    ),
+    closure_file
+  ))
+  # ordered comparison on a set that is not intertemporal
+  expect_snapshot_error(ems_model(
+    write_modified_model(
+      model_file,
+      paste(
+        "Coefficient (all,r,REG)(all,s,REG) IFBAD(r,s) # bad #;",
+        "Formula (all,r,REG)(all,s,REG) IFBAD(r,s) = IF[r < s, 1];",
+        sep = "\n"
+      )
+    ),
+    closure_file
+  ))
+})
+
+test_that("levels variables may enter an IF condition, linear ones may not (manual 11.4.5/11.4.8)", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Variable (levels) (all,r,REG)(all,t,ALLTIME) LVIF(r,t) # levels operand #;",
+      "Formula (initial) (all,r,REG)(all,t,ALLTIME) LVIF(r,t) = VTRPROV(r,t);",
+      "Coefficient (all,r,REG)(all,t,ALLTIME) IFLV(r,t) # levels expression condition #;",
+      "Formula (all,r,REG)(all,t,ALLTIME) IFLV(r,t) = IF[LVIF(r,t) * 2 > VT(t), 1] + IF[LVIF(r,t) > 3, 10];",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  expect_true(any(grepl("IFX1(r,t) = [LVIF(r,t) * 2] - [VT(t)]", model$tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,t,ALLTIME: LVIF(r,t) > 3) IFLV(r,t)", model$tab, fixed = TRUE)))
+})
+
+test_that("IF placements the rewrite cannot take reach the solver as written", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,r,REG)(all,t,ALLTIME) IFMUL(r,t) # scaled if #;",
+      "Formula (all,r,REG)(all,t,ALLTIME) IFMUL(r,t) = 2 * IF[r in REG, VTRPROV(r,t)];",
+      "Coefficient (all,t,ALLTIME) IFSUM(t) # if inside a sum #;",
+      "Formula (all,t,ALLTIME) IFSUM(t) = sum{r,REG, IF[VTRPROV(r,t) > 0, VTRPROV(r,t)]};",
+      "Variable (all,r,REG)(all,t,ALLTIME) ifeqm(r,t) # if times a variable #;",
+      "Equation E_ifeqm (all,r,REG)(all,t,ALLTIME) ifeqm(r,t) = IF[VTRPROV(r,t) > 0, 2] * pgdp(r,t);",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  expect_true(any(grepl("IFMUL(r,t) = 2 * IF[r in REG, VTRPROV(r,t)]", model$tab, fixed = TRUE)))
+  expect_true(any(grepl("sum{r,REG, IF[VTRPROV(r,t) > 0, VTRPROV(r,t)]}", model$tab, fixed = TRUE)))
+  expect_true(any(grepl("ifeqm(r,t) = IF[VTRPROV(r,t) > 0, 2] * pgdp(r,t)", model$tab, fixed = TRUE)))
+})
+
+test_that("IF takes a condition and one value", {
+  err_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,r,REG)(all,t,ALLTIME) IFBAD(r,t) # three arguments #;",
+      "Formula (all,r,REG)(all,t,ALLTIME) IFBAD(r,t) = IF[VTRPROV(r,t) > 0, 1, 2];",
+      sep = "\n"
+    )
+  )
+  expect_snapshot_error(ems_model(err_model, closure_file))
+})
+
+test_that("IN conditions stay single (manual 11.4.7 rule 5)", {
+  err_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFBAD(c,r,t) # in with and #;",
+      "Formula (all,c,COMM)(all,r,REG)(all,t,ALLTIME) IFBAD(c,r,t) = IF[c in MARG and VDB(c,r,t) > 0, 1];",
+      sep = "\n"
+    )
+  )
+  expect_snapshot_error(ems_model(err_model, closure_file))
+})
+
+test_that("IF in a levels equation and a variable in an equation condition", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Variable (levels) (all,r,REG)(all,t,ALLTIME) LVA(r,t) # levels operand #;",
+      "Formula (initial) (all,r,REG)(all,t,ALLTIME) LVA(r,t) = 1;",
+      "Variable (levels) (all,r,REG)(all,t,ALLTIME) LVB(r,t) # levels result #;",
+      "Formula (initial) (all,r,REG)(all,t,ALLTIME) LVB(r,t) = 1;",
+      "Equation (levels) E_LVB (all,r,REG)(all,t,ALLTIME) LVB(r,t) = IF[LVA(r,t) > 0, LVA(r,t)];",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  # the solver linearizes the IF; no indicator coefficient enters a
+  # levels equation
+  expect_true(any(grepl("LVB(r,t) = IF[LVA(r,t) > 0, LVA(r,t)]", model$tab, fixed = TRUE)))
+  # a plain comparison on a linear variable is named, not indicator-ized
+  expect_snapshot_error(ems_model(
+    write_modified_model(
+      model_file,
+      paste(
+        "Variable (all,r,REG)(all,t,ALLTIME) ifvc(r,t) # condition on a variable #;",
+        "Equation E_ifvc (all,r,REG)(all,t,ALLTIME) ifvc(r,t) = IF[pgdp(r,t) > 0, pgdp(r,t)];",
+        sep = "\n"
+      )
+    ),
+    closure_file
+  ))
+})
+
+test_that("index comparisons in either order keep their own helpers", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,t,ALLTIME)(all,u,ALLTIME) IFORD(t,u) # both orders #;",
+      "Formula (all,t,ALLTIME)(all,u,ALLTIME) IFORD(t,u) = IF[$POS(t) < $POS(u), 1] + IF[$POS(u) >= $POS(t), 10];",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  helpers <- model$tab[grepl("^Formula \\(all,t,ALLTIME\\)\\(all,u,ALLTIME\\) IFX[0-9]+\\(t,u\\) =", model$tab)]
+  expect_length(helpers, 2L)
+  expect_true(any(grepl("= [$POS(t)] - [$POS(u)]", helpers, fixed = TRUE)))
+  expect_true(any(grepl("= [$POS(u)] - [$POS(t)]", helpers, fixed = TRUE)))
+})
+
+test_that("coefficient-vs-coefficient IF conditions parse", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Coefficient (all,r,REG)(all,t,ALLTIME) IFCC(r,t) # coefref vs coefref #;",
+      "Formula (all,r,REG)(all,t,ALLTIME) IFCC(r,t) = IF[VTRPROV(r,t) gt VT(t), VTRPROV(r,t)];",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  expect_true(any(grepl("IFX1(r,t) = [VTRPROV(r,t)] - [VT(t)]", model$tab, fixed = TRUE)))
+  expect_true(any(grepl("(all,t,ALLTIME: IFX1(r,t) > 0) IFCC(r,t)", model$tab, fixed = TRUE)))
+})
+
+test_that("IF in equation RHS (GEMPACK manual 11.4.7)", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest(c,r,t) # if test var #;",
+      "Equation E_iftest # in-set split # (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest(c,r,t) = pds(c,r,t) + IF[c in MARG, qst(c,r,t)];",
+      "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest2(c,r,t) # if test var 2 #;",
+      "Equation E_iftest2 # comparison indicator # (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest2(c,r,t) = IF[VDB(c,r,t) gt 0, pds(c,r,t)];",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  expect_s3_class(model, "data.frame")
+  # membership IF splits the equation; comparison IF synthesizes an indicator
+  expect_true(all(c("E_iftestA", "E_iftestB", "IFC1") %in% model$name))
+})
+
+test_that("membership IF conditions on different indices in an equation reach the solver", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest(c,r,t) # if test var #;",
+      "Equation E_iftest # two indices # (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest(c,r,t) = IF[c in MARG, qst(c,r,t)] + IF[r in REG, pds(c,r,t)];",
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  expect_true(any(grepl("iftest(c,r,t) = IF[c in MARG, qst(c,r,t)] + IF[r in REG, pds(c,r,t)]", model$tab, fixed = TRUE)))
+})
+
+test_that("same-index membership IF partition in an equation (GTAPv7 E_CNTqfr shape)", {
+  ok_model <- write_modified_model(
+    model_file,
+    paste(
+      "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest(c,r,t) # if test var #;",
+      paste0(
+        "Equation E_iftest # partition # (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest(c,r,t) = ",
+        'IF[c="crops", pds(c,r,t)] + IF[c in MARG, qst(c,r,t)] - IF[c="svces", 2*pds(c,r,t)];'
+      ),
+      sep = "\n"
+    )
+  )
+  model <- ems_model(ok_model, closure_file)
+  expect_s3_class(model, "data.frame")
+  # one equation per membership term over its intersect set plus the
+  # remainder over COMM - (S1 + S2 + S3)
+  expect_true(all(paste0("E_iftest", c("A", "B", "C", "D")) %in% model$name))
+  eqs <- model$tab[grepl("^Equation E_iftest[A-D] ", model$tab)]
+  expect_length(eqs, 4L)
+  expect_match(eqs[1], "[pds(c,r,t)]", fixed = TRUE)
+  expect_no_match(eqs[1], "qst", fixed = TRUE)
+  expect_match(eqs[2], "[qst(c,r,t)]", fixed = TRUE)
+  expect_match(eqs[3], "- [2*pds(c,r,t)]", fixed = TRUE)
+  expect_no_match(eqs[4], "pds|qst")
+  rem <- model$tab[grepl("if-rewrite COMM minus \\(", model$tab)]
+  expect_length(rem, 1L)
+  expect_match(rem, "= COMM - (IFS", fixed = TRUE)
+})
+
+test_that("a split backsolve equation is reported under verbose only", {
+  bs_model <- write_modified_model(
+    model_file,
+    paste(
+      "Variable (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest(c,r,t) # if test var #;",
+      "Equation E_iftest # split by IF # (all,c,COMM)(all,r,REG)(all,t,ALLTIME) iftest(c,r,t) = pds(c,r,t) + IF[c in MARG, qst(c,r,t)];",
+      sep = "\n"
+    )
+  )
+  ems_option_set(verbose = TRUE)
+  withr::defer(ems_option_set(verbose = FALSE))
+  expect_message(
+    model <- ems_model(bs_model, closure_file, backsolve = c(iftest = "E_iftest")),
+    "split"
+  )
+  expect_true(all(c("E_iftestA", "E_iftestB") %in% model$name))
+  expect_true(is.na(model$condense[model$name %in% "iftest"]))
+  ems_option_set(verbose = FALSE)
+  expect_no_message(ems_model(bs_model, closure_file, backsolve = c(iftest = "E_iftest")))
 })
 
 test_that("partial read statement", {
@@ -365,60 +990,692 @@ test_that("ems_model errors when invalid closure pure element entry present pres
   expect_snapshot_error(ems_deploy(dat, model))
 })
 
-test_that("ems_model errors when duplicate closure entry present preswap", {
+test_that("a duplicate closure entry preswap is exogenous once, as the solver reads it (R4-B4)", {
   mod_closure <- readLines(closure_file)
   mod_closure <- mod_closure[-1]
   append_cls <- c("exogenous", "pop")
   mod_closure <- c(append_cls, mod_closure)
-  invalid_cls <- file.path(dirname(closure_file), "invalid.cls")
-  writeLines(mod_closure, invalid_cls)
+  dup_cls <- file.path(dirname(closure_file), "dup.cls")
+  writeLines(mod_closure, dup_cls)
 
-  model <- ems_model(model_file, invalid_cls)
-  nest_temp("invalid_closure4", write_dir)
-  expect_snapshot_error(ems_deploy(dat, model))
+  model <- ems_model(model_file, dup_cls)
+  nest_temp("dup_closure", write_dir)
+  cmf <- ems_deploy(dat, model)
+  cls <- readLines(list.files(dirname(cmf), pattern = "\\.cls$", full.names = TRUE))
+  expect_length(grep("^\\s*pop\\s*$", cls), 1L)
 })
 
 test_that("ems_model errors dots passed without names", {
   expect_snapshot_error(
     ems_model(model_file,
       closure_file,
-      var_omit = NULL,
+      backsolve = NULL,
+      ignore_condense = FALSE,
       1
     )
   )
 })
 
-test_that("ems_model examples run", {
-  # Simple static model retrieval and load
-  GTAPv7 <- ems_example("GTAPv7", write_dir)
-  model <- ems_model(GTAPv7[["model_file"]], GTAPv7[["closure_file"]])
-  
-  # Retrieve intertemporal model
-  GTAP_RE <- ems_example("GTAP-RE", write_dir)
-  expect_s3_class(model, "tbl_df")
-  # Construct data frame
-  sectors <- c("crops", "food", "livestock", "mnfcs", "svces")
-  regions <- c("usa", "chn", "row")
-  time_steps <- 0:5
+# --- condensation (roadmap 6.2: backsolve, GEMPACK 10.16 & 14.1.10) ---
 
-  SUBPAR <- expand.grid(
-    COMMc = sectors,
-    REGr = regions,
-    ALLTIMEt = time_steps
-  )
-  SUBPAR$Value <- runif(nrow(SUBPAR))
-  # Model load with:
-  # 1) variable omission
-  # 2) uniform numeric value applied to KAPPA coefficient
-  # 3) heterogeneous values allocated to SUBPAR via data frame
-  model <- ems_model(
-    model_file = GTAP_RE[["model_file"]],
-    closure_file = GTAP_RE[["closure_file"]],
-    var_omit = c("atall", "avaall", "tfe", "tfm", "tgd", "tgm", "tid", "tim"),
-    KAPPA = 0.03,
-    SUBPAR = SUBPAR
-  )
-  expect_s3_class(model, "tbl_df")
+condense_graft <- paste(
+  "Variable (all,r,REG)(all,t,ALLTIME) tva(r,t) # test var A #;",
+  "Variable (all,r,REG)(all,t,ALLTIME) tvb(r,t) # test var B #;",
+  "Variable (all,t,ALLTIME) tvc(t) # test var C #;",
+  "Variable (all,t,ALLTIME) tve(t) # test var E #;",
+  "Variable (all,t,ALLTIME) tvd(t) # test var D #;",
+  "Equation E_tva (all,r,REG)(all,t,ALLTIME) tva(r,t) = 2*qgdp(r,t) + pop(r,t);",
+  "Equation E_tvb (all,r,REG)(all,t,ALLTIME) tvb(r,t) = 3*tva(r,t);",
+  "Equation E_tvc (all,t,ALLTIME) tvc(t) = sum{r,REG, GDP(r,t)*tva(r,t)};",
+  "Equation E_tve (all,t,ALLTIME) tve(t) = walras_sup(t);",
+  "Equation E_tvd (all,t,ALLTIME) tvd(t) = sum{r,REG, GDP(r,t)*tve(t)};",
+  sep = "\n"
+)
+
+test_that("backsolve rewrites referencing equations and retains the defining equation", {
+  bs_model <- write_modified_model(model_file, condense_graft)
+  model <- ems_model(bs_model, closure_file, backsolve = "tva")
+
+  var_row <- model[model$type == "Variable" & model$name %in% "tva", ]
+  expect_identical(var_row$condense, "backsolve")
+  expect_identical(var_row$condense_eq, "E_tva")
+  eq_row <- model[model$type == "Equation" & model$name %in% "E_tva", ]
+  expect_identical(eq_row$condense, "backsolve")
+
+  # hand-verifiable rewrite: tvb(r,t) = 3*[2*qgdp(r,t) + pop(r,t)]
+  e_tvb <- model$tab[model$type == "Equation" & model$name %in% "E_tvb"]
+  expect_match(e_tvb, "tvb(r,t) = 3*2*qgdp(r,t) + 3*pop(r,t);", fixed = TRUE)
+
+  # substitution under a sum whose index the variable carries stays in place
+  e_tvc <- model$tab[model$type == "Equation" & model$name %in% "E_tvc"]
+  expect_match(e_tvc, "sum{r,REG, GDP(r,t)*2*qgdp(r,t)}", fixed = TRUE)
+  expect_match(e_tvc, "sum{r,REG, GDP(r,t)*pop(r,t)}", fixed = TRUE)
+
+  # no residual reference outside the retained defining equation
+  eqs <- model[model$type == "Equation", ]
+  hits <- grepl("(?<![[:alnum:]_])tva(?![[:alnum:]_])", eqs$tab, perl = TRUE)
+  expect_identical(eqs$name[hits], "E_tva")
+
+  # deployed TAB: Backsolve statement present, declaration retained
+  tab <- teems:::.finalize_tab(model)
+  expect_match(tab, "Backsolve tva using E_tva ;", fixed = TRUE)
+  expect_match(tab, "tva(r,t) # test var A #", fixed = TRUE)
 })
 
-unlink(tools::R_user_dir("teems", "cache"), recursive = TRUE)
+test_that("substitution inverts idle sums onto synthesized coefficients", {
+  bs_model <- write_modified_model(model_file, condense_graft)
+  model <- ems_model(bs_model, closure_file, backsolve = "tve")
+
+  # sum{r,REG, GDP(r,t)*tve(t)} -> CSUB1(t)*walras_sup(t),
+  # CSUB1(t) = sum{r,REG, GDP(r,t)} (GEMPACK 14.1.12 pattern)
+  e_tvd <- model$tab[model$type == "Equation" & model$name %in% "E_tvd"]
+  expect_match(e_tvd, "tvd(t) = CSUB1(t)*walras_sup(t);", fixed = TRUE)
+  csub_formula <- model$tab[model$type == "Formula" & grepl("CSUB1", model$tab)]
+  expect_match(csub_formula, "CSUB1(t) = sum{r,REG, GDP(r,t)}", fixed = TRUE)
+})
+
+test_that("backsolve through a coefficient pivot synthesizes a reciprocal", {
+  expect_no_warning(
+    model <- ems_model(model_file, closure_file, backsolve = "qgdp")
+  )
+  csub_rows <- model$tab[model$type == "Formula" & grepl("CSUB", model$tab)]
+  expect_true(any(grepl("= GDP(r,t)", csub_rows, fixed = TRUE)))
+  # every other equation is qgdp-free
+  eqs <- model[model$type == "Equation", ]
+  hits <- grepl("(?<![[:alnum:]_])qgdp(?![[:alnum:]_])", eqs$tab, perl = TRUE)
+  expect_identical(eqs$name[hits], "E_qgdp")
+})
+
+test_that("a mutually referencing backsolve pair divides by the combined pivot", {
+  pair_graft <- paste(
+    "Variable (all,r,REG)(all,t,ALLTIME) zx(r,t) # make supply #;",
+    "Variable (all,r,REG)(all,t,ALLTIME) zp(r,t) # make price #;",
+    "Variable (all,r,REG)(all,t,ALLTIME) zc(r,t) # make total #;",
+    "Equation E_zx (all,r,REG)(all,t,ALLTIME) zx(r,t) = qgdp(r,t) + 2*[zp(r,t) - pop(r,t)];",
+    "Equation E_zp (all,r,REG)(all,t,ALLTIME) zp(r,t) = pop(r,t) - 0.05*[zx(r,t) - zc(r,t)];",
+    "Equation E_zc (all,r,REG)(all,t,ALLTIME) zc(r,t) = zx(r,t);",
+    "Backsolve zp using E_zp;",
+    "Backsolve zx using E_zx;",
+    sep = "\n"
+  )
+  pair_model <- write_modified_model(model_file, pair_graft)
+  model <- ems_model(pair_model, closure_file)
+  eqs <- stats::setNames(model$tab, model$name)
+  pivot <- regmatches(eqs[["E_zc"]], regexpr("CSUB[0-9]+", eqs[["E_zc"]]))
+  expect_true(any(grepl(paste0("Formula +", pivot, " = 1 \\+ 2\\*0.05;"), model$tab)))
+  expect_match(eqs[["E_zc"]], paste0("= 1/", pivot, "*qgdp(r,t)"), fixed = TRUE)
+  expect_match(eqs[["E_zp"]], paste0("0.05/", pivot, "*qgdp(r,t)"), fixed = TRUE)
+})
+
+test_that("in-TAB Omit statements exogenize the omitted variables", {
+  omit_model <- write_modified_model(model_file, "Omit atall avaall qgdp ;")
+  expect_snapshot(model <- ems_model(omit_model, closure_file))
+  # nothing condensed: references kept, statement stripped, variables deployed
+  expect_true(all(is.na(model$condense)))
+  expect_true(any(grepl("atall\\(", model$tab[model$type == "Equation"])))
+  expect_false(any(grepl("^Omit", model$tab)))
+  tab <- teems:::.finalize_tab(model)
+  expect_true(grepl("(?<![[:alnum:]_])atall(?![[:alnum:]_])", tab, perl = TRUE))
+  # omitted variables join the closure once, already-listed ones are not duplicated
+  cls <- attr(model, "closure")
+  expect_equal(sum(cls == "atall"), 1L)
+  expect_equal(sum(cls == "qgdp"), 1L)
+})
+
+test_that("in-TAB Substitute executes as backsolve with a message", {
+  sub_model <- write_modified_model(
+    model_file,
+    paste(condense_graft, "Substitute tva using E_tva ;", sep = "\n")
+  )
+  expect_snapshot(model <- ems_model(sub_model, closure_file))
+  expect_identical(
+    model$condense[model$type == "Variable" & model$name %in% "tva"],
+    "backsolve"
+  )
+})
+
+test_that("ignore_condense disables in-TAB condensation statements", {
+  bs_model <- write_modified_model(
+    model_file,
+    paste(condense_graft, "Backsolve tva using E_tva ;", sep = "\n")
+  )
+  model <- ems_model(bs_model, closure_file, ignore_condense = TRUE)
+  expect_true(all(is.na(model$condense)))
+  expect_true(any(grepl("tva\\(", model$tab[model$type == "Equation" & model$name %in% "E_tvb"])))
+})
+
+test_that("ems_model rejects a non-logical or non-scalar ignore_condense", {
+  expect_snapshot_error(
+    ems_model(model_file, closure_file, ignore_condense = NA)
+  )
+  expect_snapshot_error(
+    ems_model(model_file, closure_file, ignore_condense = c(TRUE, FALSE))
+  )
+})
+
+test_that("ignore_condense drops in-TAB statements but still applies the arguments (ICT)", {
+  ict_model <- write_modified_model(
+    model_file,
+    paste(condense_graft, "Backsolve tvb using E_tvb ;", sep = "\n")
+  )
+  expect_message(
+    model <- ems_model(ict_model, closure_file,
+      ignore_condense = TRUE, backsolve = "tva"
+    ),
+    "in-TAB condensation statement"
+  )
+  vars <- model[model$type == "Variable", ]
+  # the in-TAB nomination is gone
+  expect_true(is.na(vars$condense[vars$name %in% "tvb"]))
+  # the argument applied
+  expect_identical(vars$condense[vars$name %in% "tva"], "backsolve")
+  expect_identical(vars$condense_eq[vars$name %in% "tva"], "E_tva")
+  e_tvb <- model$tab[model$type == "Equation" & model$name %in% "E_tvb"]
+  expect_match(e_tvb, "tvb(r,t) = 3*2*qgdp(r,t) + 3*pop(r,t);", fixed = TRUE)
+})
+
+test_that("ignore_condense on a model without condensation statements is a silent no-op", {
+  strip_condense <- function(text, x) {
+    gsub("(?mi)^[[:blank:]]*(omit|backsolve|substitute)\\b[^;]*;", "",
+      text, perl = TRUE
+    )
+  }
+  bare_model <- write_modified_model(model_file, "", .fn = strip_condense)
+  expect_no_message(
+    model <- ems_model(bare_model, closure_file, ignore_condense = TRUE),
+    message = "ignored"
+  )
+  expect_true(all(is.na(model$condense)))
+  expect_identical(
+    sum(model$type == "Variable"),
+    sum(ems_model(bare_model, closure_file)$type == "Variable")
+  )
+})
+
+test_that("in-TAB statements and arguments combine under ignore_condense = FALSE", {
+  # documented order: in-TAB backsolves, then the backsolve argument
+  # (model_load.qmd); the union is applied
+  both_model <- write_modified_model(
+    model_file,
+    paste(condense_graft, "Backsolve tva using E_tva ;", sep = "\n")
+  )
+  model <- ems_model(both_model, closure_file, backsolve = "tvb")
+  vars <- model[model$type == "Variable", ]
+  expect_setequal(vars$name[vars$condense %in% "backsolve"], c("tva", "tvb"))
+  expect_identical(vars$condense_eq[vars$name %in% "tva"], "E_tva")
+  expect_identical(vars$condense_eq[vars$name %in% "tvb"], "E_tvb")
+  eqs <- model[model$type == "Equation", ]
+  # tva was substituted out of the tvb defining equation and of E_tvc
+  expect_match(
+    eqs$tab[eqs$name %in% "E_tvb"],
+    "tvb(r,t) = 3*2*qgdp(r,t) + 3*pop(r,t);", fixed = TRUE
+  )
+  expect_false(grepl("tva\\(", eqs$tab[eqs$name %in% "E_tvc"]))
+  tab <- strsplit(teems:::.finalize_tab(model), "\n")[[1]]
+  expect_setequal(
+    tab[grepl("^Backsolve ", tab)],
+    c("Backsolve tva using E_tva ;", "Backsolve tvb using E_tvb ;")
+  )
+  # the same nomination from both sources is one backsolve, not a conflict
+  dup_model <- write_modified_model(
+    model_file, paste(condense_graft, "Backsolve tva using E_tva ;", sep = "\n")
+  )
+  dup <- ems_model(dup_model, closure_file, backsolve = "tva")
+  expect_identical(sum(dup$condense %in% "backsolve" & dup$type == "Variable"), 1L)
+})
+
+test_that("ems_model rejects invalid variable names in backsolve", {
+  expect_snapshot_error(ems_model(model_file, closure_file, backsolve = "not_a_var"))
+})
+
+test_that("ems_model rejects invalid equation names in backsolve", {
+  expect_snapshot_error(
+    ems_model(model_file, closure_file, backsolve = c(qgdp = "E_not_real"))
+  )
+})
+
+test_that("ems_model rejects unresolvable backsolve entries", {
+  # pop has no E_pop defining equation
+  expect_snapshot_error(ems_model(model_file, closure_file, backsolve = "pop"))
+})
+
+test_that("ems_model rejects conflicting condensation actions", {
+  bs_model <- write_modified_model(model_file, condense_graft)
+  expect_snapshot_error(
+    ems_model(bs_model, closure_file, backsolve = c(tva = "E_tva", tva = "E_tvb"))
+  )
+})
+
+test_that("ems_model rejects a reused backsolve equation", {
+  bs_model <- write_modified_model(model_file, condense_graft)
+  expect_snapshot_error(
+    ems_model(bs_model, closure_file, backsolve = c(tva = "E_tva", tvb = "E_tva"))
+  )
+})
+
+test_that("a backsolve equation the condensation parser cannot read aborts with the reason", {
+  parse_graft <- paste(
+    "Variable (all,r,REG)(all,t,ALLTIME) tvn(r,t) # parse test var #;",
+    "Variable (all,r,REG)(all,t,ALLTIME) tvq(r,t) # parse test var #;",
+    "Equation E_tn (all,r,REG)(all,t,ALLTIME) tvn(r,t) = pop(r,t) * pop(r,t);",
+    "Equation E_tq (all,r,REG: POP(r) > 0)(all,t,ALLTIME) tvq(r,t) = pop(r,t);",
+    sep = "\n"
+  )
+  parse_model <- write_modified_model(model_file, parse_graft)
+  # a side that is not linear in the variables
+  expect_snapshot_error(ems_model(parse_model, closure_file, backsolve = c(tvn = "E_tn")))
+  # a conditional quantifier
+  expect_snapshot_error(ems_model(parse_model, closure_file, backsolve = c(tvq = "E_tq")))
+})
+
+test_that("backsolve rule violations abort (GEMPACK 14.1.10)", {
+  rule_graft <- paste(
+    "Variable (all,r,REG)(all,t,ALLTIME) tvr(r,t) # rule test var #;",
+    "Variable (all,t,ALLTIME) tvc2(t) # rule test var #;",
+    "Variable (all,t,ALLTIME) tvc3(t) # rule test var #;",
+    "Variable (all,c,COMM)(all,t,ALLTIME) tvm(c,t) # rule test var #;",
+    "Variable (all,r,REG)(all,s,REG)(all,t,ALLTIME) tvrr(r,s,t) # rule test var #;",
+    "Equation E_tr1 (all,t,ALLTIME) tvr(\"usa\",t) = walras_sup(t);",
+    "Equation E_tr2 (all,t,ALLTIME) tvc2(t) = sum{r,REG, tvr(r,t)};",
+    "Equation E_tr3 (all,r,REG)(all,t,ALLTIME) tvc3(t) = pop(r,t);",
+    "Equation E_tr4 (all,m,MARG)(all,t,ALLTIME) tvm(m,t) = walras_sup(t);",
+    "Equation E_tr5 (all,r,REG)(all,t,ALLTIME) tvrr(r,r,t) = pop(r,t);",
+    "Equation E_tr6 (all,r,REG)(all,t,ALLTIME) tvr(r,t+1) = pop(r,t);",
+    "Equation E_tr7 (all,r,REG)(all,s,REG)(all,t,ALLTIME) tvrr(r,s,t) = tvrr(s,r,t) + pop(r,t);",
+    "Equation E_trc (all,r,REG)(all,t,ALLTIME) tvr(r,t) = tvr(r,t) + pop(r,t);",
+    sep = "\n"
+  )
+  rule_model <- write_modified_model(model_file, rule_graft)
+
+  # rule 1: element argument
+  expect_snapshot_error(ems_model(rule_model, closure_file, backsolve = c(tvr = "E_tr1")))
+  # rule 2: SUM index as argument
+  expect_snapshot_error(ems_model(rule_model, closure_file, backsolve = c(tvr = "E_tr2")))
+  # rule 3: equation ALL index absent from the occurrence
+  expect_snapshot_error(ems_model(rule_model, closure_file, backsolve = c(tvc3 = "E_tr3")))
+  # rule 4: quantifier ranges over a subset of the declared set
+  expect_snapshot_error(ems_model(rule_model, closure_file, backsolve = c(tvm = "E_tr4")))
+  # rule 5: repeated index within one occurrence
+  expect_snapshot_error(ems_model(rule_model, closure_file, backsolve = c(tvrr = "E_tr5")))
+  # rule 6: lead/lag offset argument
+  expect_snapshot_error(ems_model(rule_model, closure_file, backsolve = c(tvr = "E_tr6")))
+  # rule 7: two occurrences with different index patterns
+  expect_snapshot_error(ems_model(rule_model, closure_file, backsolve = c(tvrr = "E_tr7")))
+  # occurrences cancel: no expression obtainable
+  expect_snapshot_error(ems_model(rule_model, closure_file, backsolve = c(tvr = "E_trc")))
+})
+
+test_that("backsolved variables must be endogenous in the closure", {
+  endo_graft <- paste(
+    "Variable (all,r,REG)(all,t,ALLTIME) tvz(r,t) # closure test var #;",
+    "Equation E_tvp (all,r,REG)(all,t,ALLTIME) pop(r,t) = tvz(r,t);",
+    sep = "\n"
+  )
+  endo_model <- write_modified_model(model_file, endo_graft)
+  expect_snapshot_error(
+    ems_model(endo_model, closure_file, backsolve = c(pop = "E_tvp"))
+  )
+})
+
+test_that("swaps and shocks on condensed variables abort", {
+  bs_model <- write_modified_model(model_file, condense_graft)
+  model <- ems_model(bs_model, closure_file, backsolve = "tva")
+  nest_temp("condensed_guard", write_dir)
+  expect_snapshot_error(
+    ems_deploy(dat, model, swap_in = "tva", swap_out = "pop")
+  )
+  expect_snapshot_error(
+    ems_deploy(dat, model, shock = ems_uniform_shock("tva", 1))
+  )
+})
+
+test_that("GTAP standard condensation condenses cleanly", {
+  # gtapv7.sti (corpus 12102.zip) standard backsolves, minus the four
+  # regional-aggregate CNT* variables absent from the teems GTAPv7 variant
+  std_backsolve <- c(
+    "pfactreal", "CNTqpm", "CNTqfd", "CNTqfm", "qfe", "CNTqim", "pfd",
+    "qia", "qtmfsd", "qfd", "CNTqfe", "c2_cr", "ptrans", "atmfsd", "afa",
+    "qca", "qfa", "pca", "qfm", "compvalad", "qgd", "pfa", "pes", "pgd",
+    "ps", "CNTtech_ava", "CNTendw", "qint", "CNTqe", "pmds", "pcif",
+    "qpd", "CNTqpd", "CNTqid", "c3_cr", "CNTqms", "qim", "CNTtech_ao",
+    "CNTqca", "qxs", "c1_cr", "CNTqfeer", "qmw", "ppm", "qpm",
+    "CNTtech_ams", "CNTqgd", "pfm", "qva", "pfob", "pint", "pfe",
+    "CNTalleffcr", "CNTtech_af", "CNTtech_aint", "CNTtech_afe", "afe",
+    "qid", "pva", "qgm", "CNTqo", "CNTtech_atmfsd", "CNTqgm", "ppd",
+    "pgm", "CNTqxs", "qpev", "aint"
+  )
+
+  GTAPv7 <- ems_example("GTAPv7", write_dir)
+  suppressWarnings(
+    model <- ems_model(GTAPv7[["model_file"]], GTAPv7[["closure_file"]],
+      backsolve = std_backsolve, ignore_condense = TRUE
+    )
+  )
+
+  var_flags <- model[model$type == "Variable" & !is.na(model$condense), ]
+  expect_identical(sum(var_flags$condense == "backsolve"), length(std_backsolve))
+
+  # no equation other than the retained defining equation references a
+  # backsolved variable; retained equations reference survivors only
+  eqs <- model[model$type == "Equation", ]
+  for (v in std_backsolve) {
+    def_eq <- model$condense_eq[model$type == "Variable" & model$name %in% v]
+    hit <- grepl(paste0("(?<![[:alnum:]_])", v, "(?![[:alnum:]_])"), eqs$tab,
+      perl = TRUE, ignore.case = TRUE
+    )
+    expect_identical(setdiff(eqs$name[hit], def_eq), character(0))
+  }
+
+  # deployed TAB carries one Backsolve statement per substitution
+  tab <- teems:::.finalize_tab(model)
+  expect_identical(
+    sum(grepl("^Backsolve ", strsplit(tab, "\n")[[1]])),
+    length(std_backsolve)
+  )
+})
+
+test_that("GTAPv6 condenses automatically from its in-TAB statements (gtap.sti)", {
+  v6 <- ems_example("GTAPv6", write_dir)
+  model <- ems_model(v6[["model_file"]], v6[["closure_file"]])
+  vars <- model[model$type == "Variable", ]
+
+  # the 60 gtap.sti backsolves; its omissions are not carried
+  expect_false(any(vars$condense %in% "omit"))
+  expect_identical(sum(vars$condense %in% "backsolve"), 60L)
+  expect_identical(
+    vars$condense_eq[vars$name %in% "pgov"], "GPRICEINDEX"
+  )
+
+  # no retained equation references a backsolved variable
+  eqs <- model[model$type == "Equation", ]
+  bs <- vars[vars$condense %in% "backsolve", ]
+  for (r in seq_len(nrow(bs))) {
+    hits <- grepl(
+      paste0("(?<![[:alnum:]_])", bs$name[r], "(?![[:alnum:]_])"),
+      eqs$tab, perl = TRUE, ignore.case = TRUE
+    )
+    expect_identical(eqs$name[hits], bs$condense_eq[r], label = bs$name[r])
+  }
+
+  # the deployed TAB carries the backsolves
+  tab <- strsplit(teems:::.finalize_tab(model), "\n")[[1]]
+  expect_identical(sum(grepl("^Backsolve ", tab)), 60L)
+  expect_false(any(grepl("^Omit", tab, ignore.case = TRUE)))
+
+  # ignore_condense restores the full system
+  expect_message(
+    plain <- ems_model(v6[["model_file"]], v6[["closure_file"]],
+      ignore_condense = TRUE
+    ),
+    "ignored"
+  )
+  expect_true(all(is.na(plain$condense)))
+  expect_identical(
+    sum(plain$type == "Variable"), sum(model$type == "Variable")
+  )
+})
+
+test_that("GTAPv7 condenses automatically from its in-TAB statements (gtapv7.sti)", {
+  v7 <- ems_example("GTAPv7", write_dir)
+  ems_option_set(verbose = TRUE)
+  withr::defer(ems_option_set(verbose = FALSE))
+  msgs <- character(0)
+  model <- withCallingHandlers(
+    suppressWarnings(ems_model(v7[["model_file"]], v7[["closure_file"]])),
+    message = \(m) {
+      msgs <<- c(msgs, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    }
+  )
+  expect_false(any(grepl("IF rewrite split", msgs)))
+  vars <- model[model$type == "Variable", ]
+  expect_false(any(vars$condense %in% "omit"))
+  # the four CNT* variables whose defining equations the IF rewrite
+  # partitions carry no Backsolve statement
+  expect_identical(sum(vars$condense %in% "backsolve"), 68L)
+  expect_true(all(is.na(vars$condense[vars$name %in% c("CNTqfr", "CNTqgr", "CNTalleffr", "CNTtechr")])))
+  # the upstream PostSim report blocks ride along: products, $POS mappings
+  expect_true(all(c("UACT", "UCOM", "ALLOCEFF") %in% model$name[model$type == "Set"]))
+  expect_true(all(c("UCOM2COMM", "UACT2ACTS") %in% model$name[model$type == "Mapping"]))
+  expect_true(sum(model$postsim) > 100L)
+})
+
+test_that("assertion continuation labels are read as assertions", {
+  graft <- paste(
+    "Assertion # first check # (all,r,REG)(all,t,ALLTIME) GDP(r,t) > -1e30;",
+    "# second check # (all,r,REG)(all,t,ALLTIME) GDP(r,t) > -1e30;",
+    sep = "\n"
+  )
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  asserts <- model$tab[model$type == "Assertion"]
+  expect_true(any(grepl("second check", asserts)))
+  expect_equal(sum(grepl("first check|second check", asserts)), 2L)
+})
+
+test_that("a semicolon inside a label does not split the statement", {
+  graft <- "Coefficient (all,r,REG) SCLAB(r) # ratio; near one for local #;"
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  row <- model[model$type == "Coefficient" & model$name == "SCLAB", ]
+  expect_equal(nrow(row), 1L)
+  expect_equal(row$label, "ratio, near one for local")
+})
+
+test_that("braces used as grouping brackets are read as brackets", {
+  graft <- paste(
+    "Variable (all,r,REG)(all,t,ALLTIME) brv(r,t) # braces #;",
+    "Equation E_brv (all,r,REG)(all,t,ALLTIME) brv(r,t) = 2*{qgdp(r,t) + pop(r,t)};",
+    "Backsolve brv using E_brv;",
+    sep = "\n"
+  )
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  expect_true("brv" %in% model$name[model$condense %in% "backsolve"])
+  expect_true(any(grepl("2*[qgdp(r,t) + pop(r,t)]", model$tab, fixed = TRUE)))
+})
+
+test_that("a qualifier written after the quantifier list is accepted", {
+  graft <- paste(
+    "Variable (all,r,REG)(all,t,ALLTIME) (change) qav(r,t) # after the quantifiers #;",
+    "Equation E_qav (all,r,REG)(all,t,ALLTIME) qav(r,t) = qgdp(r,t);",
+    sep = "\n"
+  )
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  row <- model[model$type == "Variable" & model$name == "qav", ]
+  expect_equal(nrow(row), 1L)
+  expect_true(grepl("change", row$qualifier_list))
+  expect_true(startsWith(row$tab, "Variable (change) (all,r,REG)"))
+})
+
+test_that("whitespace inside a quantifier is tolerated", {
+  graft <- "Coefficient (all, r,REG)(all,t, ALLTIME) WSQ(r,t) # spaced quantifiers #;"
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  row <- model[model$type == "Coefficient" & model$name == "WSQ", ]
+  expect_equal(row$ls_upper_idx[[1]], c("REG", "ALLTIME"))
+})
+
+test_that("ranked PostSim sets are flattened to their base set", {
+  graft <- paste(
+    "PostSim (begin);",
+    "Set REGUP = REG ranked up by qgdp;",
+    "Coefficient (all,r,REGUP)(all,t,ALLTIME) RGR(r,t) # ranked report #;",
+    "Formula (all,r,REGUP)(all,t,ALLTIME) RGR(r,t) = qgdp(r,t);",
+    "PostSim (end);",
+    sep = "\n"
+  )
+  expect_snapshot(model <- ems_model(write_modified_model(model_file, graft), closure_file))
+  row <- model[model$type == "Set" & model$name == "REGUP", ]
+  expect_equal(nrow(row), 1L)
+  expect_false(grepl("ranked", row$tab))
+})
+
+test_that("sets with @ in their elements are kept", {
+  graft <- "Set WAGG # AGGHAR instructions # (SCET@@@@1TOT, P018@@@@4PUR);"
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  expect_true("WAGG" %in% model$name)
+})
+
+test_that("@ is a name character in coefficients, indices and elements", {
+  graft <- paste(
+    "Set W@SET # at set # (a@1, b@2);",
+    "Coefficient (all,w@i,W@SET) W@GT(w@i) # at coefficient #;",
+    "Formula (all,w@i,W@SET) W@GT(w@i) = 1;",
+    "Formula W@GT(\"a@1\") = 2;",
+    sep = "\n"
+  )
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  expect_true(all(c("W@SET", "W@GT") %in% model$name))
+  row <- model[model$type == "Coefficient" & model$name == "W@GT", ]
+  expect_equal(row$ls_mixed_idx[[1]], "W@SETw@i")
+})
+
+test_that("Write (Set) statements are dropped", {
+  graft <- paste(
+    "File (new) SUMMARY # summary #;",
+    "Write (Set) REG to file SUMMARY header \"REGW\";",
+    "Write",
+    " (Set) COMM to file SUMMARY header \"COMW\";",
+    sep = "\n"
+  )
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  expect_false(any(grepl("REGW|COMW", model$tab)))
+})
+
+test_that("an element name equal to a coefficient name is not folded into it", {
+  graft <- paste(
+    "Set MCHK (USE,MAKE,DIFF);",
+    "Coefficient (all,r,REG)(all,t,ALLTIME) MAKE(r,t) # collides with an element #;",
+    "Formula (all,r,REG)(all,t,ALLTIME) MAKE(r,t) = GDP(r,t);",
+    "Coefficient (all,r,REG)(all,t,ALLTIME)(all,m,MCHK) MCHKC(r,t,m) # report #;",
+    "Formula (all,r,REG)(all,t,ALLTIME) MCHKC(r,t,\"MAKE\") = MAKE(r,t);",
+    sep = "\n"
+  )
+  model <- ems_model(write_modified_model(model_file, graft), closure_file)
+  expect_true("MAKE" %in% model$name[model$type == "Coefficient"])
+  expect_false("make" %in% model$name[model$type == "Coefficient"])
+  expect_true(any(grepl("MCHKC(r,t,\"make\") = MAKE(r,t)", model$tab, fixed = TRUE)))
+  expect_true(any(grepl("Set MCHK (use,make,diff)", model$tab, fixed = TRUE)))
+})
+
+test_that("xSet and xSubset lines in the closure file define sets", {
+  mod_closure <- c(
+    "xSet BIG # two regions # (chn, usa);",
+    "xSubset BIG is subset of REG;",
+    "xSet SMALL # the rest # = REG - BIG;",
+    readLines(closure_file)
+  )
+  xset_cls <- file.path(dirname(closure_file), "xset.cls")
+  writeLines(mod_closure, xset_cls)
+  model <- ems_model(model_file, xset_cls)
+  expect_true(all(c("BIG", "SMALL") %in% model$name[model$type == "Set"]))
+  expect_true(any(grepl("^Subset BIG is subset of REG", model$tab[model$type == "Subset"])))
+})
+
+test_that("the condensation block runs with both Zerodivide defaults off (D1-B3)", {
+  model <- ems_model(model_file, closure_file, backsolve = "qgdp")
+  tab <- model$tab
+  first_csub <- which(model$type == "Coefficient" & grepl("CSUB", tab, fixed = TRUE))[1]
+  expect_match(tab[first_csub - 2L], "^Zerodivide \\(zero_by_zero\\) off\\s*;$")
+  expect_match(tab[first_csub - 1L], "^Zerodivide \\(nonzero_by_zero\\) off\\s*;$")
+  plain <- ems_model(model_file, closure_file, ignore_condense = TRUE)
+  expect_false(any(grepl("Zerodivide \\(zero_by_zero\\) off", plain$tab)))
+})
+
+unlink(write_dir, recursive = TRUE)
+
+
+cndns_tab <- function(def_eq) {
+  f <- withr::local_tempfile(fileext = ".tab", .local_envir = parent.frame())
+  writeLines(c(
+    "File INFILE # data #;",
+    "Set REG # regions # (chn, usa, x);",
+    "Set COMM # commodities # (c1, c2);",
+    "Coefficient (all,i,COMM)(all,s,REG) TX(i,s) # data #;",
+    'Read TX from file INFILE header "TX";',
+    "Variable (all,i,COMM)(all,r,REG) pm(i,r) # price #;",
+    "Variable (all,i,COMM)(all,r,REG) ps(i,r) # supply price #;",
+    "Variable (all,i,COMM)(all,r,REG)(all,s,REG) pms(i,r,s) # bilateral #;",
+    def_eq,
+    "Equation E_pms (all,i,COMM)(all,r,REG)(all,s,REG) pms(i,r,s) = pm(i,s) + ps(i,r);",
+    "Backsolve pm using E_pm;"
+  ), f)
+  m <- .process_tablo(f, call = NULL, quiet = TRUE)
+  m$tab
+}
+
+test_that("condensation keeps the condition of a hoisted conditional sum", {
+  tab <- cndns_tab('Equation E_pm (all,i,COMM)(all,r,REG) pm(i,r) = sum{s,REG: s <> r AND s <> "x", TX(i,s)*ps(i,r)};')
+  expect_true(any(grepl('CSUB1(i,s) = sum{s1,REG: s1<>s AND s1<>"x", TX(i,s1)}', tab, fixed = TRUE)))
+})
+
+test_that("condensation renames indices whatever their case", {
+  tab <- cndns_tab("Equation E_pm (all,i,COMM)(all,R,REG) pm(i,R) = TX(i,r)*ps(i,R);")
+  expect_true(any(grepl("pms(i,r,s) = TX(i,s)*ps(i,s) + ps(i,r);", tab, fixed = TRUE)))
+})
+
+test_that("a numeric replaces exactly the defining Formula's right-hand side", {
+  v7_dir <- file.path(write_dir, "v7")
+  dir.create(v7_dir, recursive = TRUE, showWarnings = FALSE)
+  v7 <- ems_example("GTAPv7", v7_dir)
+  model <- ems_model(v7[["model_file"]], v7[["closure_file"]], VPP = 2, UTILPRIV = 0.5)
+  base <- ems_model(v7[["model_file"]], v7[["closure_file"]])
+  expect_identical(model$tab[.formula_lhs_rows(model, "VPP")], "Formula (all,c,COMM)(all,r,REG) VPP(c,r) = 2;")
+  expect_true(grepl("= 0.5;", model$tab[.formula_lhs_rows(model, "UTILPRIV")], fixed = TRUE))
+  expect_identical(
+    model$tab[.formula_lhs_rows(model, "UTILPRIVEV")],
+    base$tab[.formula_lhs_rows(base, "UTILPRIVEV")]
+  )
+  expect_identical(model$tab[-.formula_lhs_rows(model, c("VPP", "UTILPRIV"))], base$tab[-.formula_lhs_rows(base, c("VPP", "UTILPRIV"))])
+})
+
+test_that("a numeric for a coefficient with more than one defining Formula aborts", {
+  v7_dir <- file.path(write_dir, "v7")
+  dir.create(v7_dir, recursive = TRUE, showWarnings = FALSE)
+  v7 <- ems_example("GTAPv7", v7_dir)
+  expect_snapshot_error(ems_model(v7[["model_file"]], v7[["closure_file"]], IFC1 = 1))
+})
+
+test_that("equation IF and sum-condition indicators follow every Formula (GEMPACK manual 11.16.2)", {
+  tab <- c(
+    "File DATA # data #",
+    "Set S # elements # (e1, e2, e3)",
+    "Coefficient (all,i,S) A(i) # switch #",
+    "Formula (all,i,S) A(i) = 1",
+    "Variable (all,i,S) x(i) # x #",
+    "Variable (all,i,S) y(i) # y #",
+    "Equation E_x (all,i,S) x(i) = IF[A(i) > 0.5, y(i)] + 0.5*y(i)",
+    "Equation E_y (all,i,S) y(i) = sum{j,S: A(j) > 0.5, x(j)} + x(i)",
+    "Formula (all,i,S) A(i) = $pos(i) - 1.5"
+  )
+  out <- .rewrite_tab_if(.rewrite_sum_conditions(tab, call = NULL), call = NULL)
+  last_user_formula <- max(which(grepl("^Formula \\(all,i,S\\) A\\(i\\)", out)))
+  equations <- which(grepl("^Equation", out))
+  indicators <- which(grepl("^Formula", out) & !grepl("^Formula \\(all,i,S\\) A\\(i\\)", out))
+  expect_length(indicators, 4L)
+  expect_true(all(indicators > last_user_formula))
+  expect_true(all(indicators > max(equations)))
+})
+
+test_that("a sum-condition indicator skips helper names the TAB already declares", {
+  tab <- c(
+    "File DATA # data #",
+    "Set S # elements # (e1, e2, e3)",
+    "Coefficient (all,i,S) A(i) # switch #",
+    "Coefficient (all,i,S) IFC1(i) # user-declared IFC1 #",
+    "Formula (all,i,S) A(i) = 1",
+    "Formula (all,i,S) IFC1(i) = 2",
+    "Variable (all,i,S) x(i) # x #",
+    "Variable (all,i,S) y(i) # y #",
+    "Equation E_y (all,i,S) y(i) = sum{j,S: A(j) > 0.5, x(j)} + x(i)"
+  )
+  out <- .rewrite_sum_conditions(tab, call = NULL)
+  declared <- sub("^Coefficient .* (IFC[0-9]+)\\(.*$", "\\1", grep("^Coefficient .* IFC[0-9]+\\(", out, value = TRUE))
+  expect_length(declared, 2L)
+  expect_identical(anyDuplicated(declared), 0L)
+  expect_false("IFC1" %in% declared[-1L])
+})
+
+test_that("an identifier ending in E before a sign is not an exponent", {
+  terms <- .split_tab_terms("y(i)*A2E-y(i) + 1e-3*x(i) - cub06b_4E-x(i)")
+  expect_identical(terms$sign, c("+", "-", "+", "-", "-"))
+  expect_identical(terms$body, c("y(i)*A2E", "y(i)", "1e-3*x(i)", "cub06b_4E", "x(i)"))
+})
+

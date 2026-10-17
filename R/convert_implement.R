@@ -1,5 +1,4 @@
 #' @importFrom purrr map_lgl
-#'
 #' @keywords internal
 #' @noRd
 .implement_convert <- function(args_list,
@@ -17,7 +16,58 @@
     convert = TRUE
   )
 
-  if (attr(i_data, "metadata")$data_format %=% v$target) {
+  if (!is.null(v$target) && v$target %=% "GTAP-EP") {
+    if (isTRUE(attr(i_data, "metadata")[["ep"]])) {
+      target <- v$target
+      .cli_action(convert_wrn$format,
+        action = "warn",
+        call = call
+      )
+    } else {
+      if (attr(i_data, "metadata")$data_format %=% "GTAPv6") {
+        .cli_action(data_err$ep_v6_format,
+          action = c("abort", "inform"),
+          call = call
+        )
+      }
+      i_data <- .prepare_ep(i_data = i_data, call = call)
+    }
+    v$target <- NULL
+  } else if (!is.null(v$target) && v$target %=% "GTAP-E") {
+    if (isTRUE(attr(i_data, "metadata")[["e"]])) {
+      target <- v$target
+      .cli_action(convert_wrn$format,
+        action = "warn",
+        call = call
+      )
+    } else {
+      if (attr(i_data, "metadata")$data_format %=% "GTAPv6") {
+        .cli_action(data_err$e_v6_format,
+          action = c("abort", "inform"),
+          call = call
+        )
+      }
+      i_data <- .prepare_e(i_data = i_data, call = call)
+    }
+    v$target <- NULL
+  } else if (!is.null(v$target) && v$target %=% "GTAP-AEZ") {
+    if (isTRUE(attr(i_data, "metadata")[["aez"]])) {
+      target <- v$target
+      .cli_action(convert_wrn$format,
+        action = "warn",
+        call = call
+      )
+    } else {
+      if (attr(i_data, "metadata")$data_format %=% "GTAPv6") {
+        .cli_action(data_err$aez_v6_format,
+          action = c("abort", "inform"),
+          call = call
+        )
+      }
+      i_data <- .prepare_aez(i_data = i_data, call = call)
+    }
+    v$target <- NULL
+  } else if (attr(i_data, "metadata")$data_format %=% v$target) {
     target <- v$target
     .cli_action(convert_wrn$format,
       action = "warn",

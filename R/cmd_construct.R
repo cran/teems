@@ -1,5 +1,22 @@
+#' @keywords internal
+#' @noRd
+.shell_quote <- function(x, os = .Platform$OS.type) {
+  quoted <- shQuote(x, type = if (os %=% "windows") {
+    "cmd"
+  } else {
+    "sh"
+  })
+  return(quoted)
+}
+
+#' @keywords internal
+#' @noRd
+.mode_flag <- function(flag, x) {
+  flag <- paste(flag, c(off = 0L, warn = 1L, fatal = 2L)[[x]])
+  return(flag)
+}
+
 #' @importFrom cli cli_verbatim cli_ol
-#'
 #' @keywords internal
 #' @noRd
 .construct_cmd <- function(paths,
@@ -8,53 +25,96 @@
                            n_tasks,
                            n_subintervals,
                            solmed,
-                           nesteddbbd,
-                           laA,
-                           laDi,
-                           laD,
                            matsol,
                            steps,
-                           enable_time,
-                           append_args) {
-  docker_preamble <- paste(
-    "docker run --rm --mount",
-    paste("type=bind", paste0("src=", paths$run), "dst=/opt/teems", sep = ","),
-    paste0("teems", ":", .o_docker_tag()),
-    "/bin/bash -c"
-  )
+                           adaptive = "no",
+                           eps_tolerance = 0.01,
+                           max_retries = 3L,
+                           retry_adjust = 0.5,
+                           n_threads = 1L,
+                           precision = "single",
+                           verbosity = 1L,
+                           assertions = NULL,
+                           range_test_initial = NULL,
+                           range_test_updated = NULL,
+                           complementarity = NULL,
+                           laA = NULL,
+                           laD = NULL,
+                           laDi = NULL,
+                           extra_flags = NULL) {
+  docker_preamble <- .docker_run_preamble(timeID = timeID, run_dir = paths$run)
+  solver_bin <- if (precision %=% "double") {
+    "/opt/teems-solver/solver/teems-solver-f64"
+  } else {
+    "/opt/teems-solver/solver/teems-solver"
+  }
+  n_tasks <- format(n_tasks, scientific = FALSE, trim = TRUE)
   exec_preamble <- paste(
     docker_preamble,
-    '"/opt/teems-solver/lib/mpi/bin/mpiexec',
+    '"set -o pipefail; /opt/teems-solver/lib/mpi/bin/mpiexec',
     "-n", n_tasks,
-    "/opt/teems-solver/solver/hsl",
+    solver_bin,
     "-cmdfile", paths$docker_cmf
   )
 
   docker_diagnostic_out <- file.path(paths$docker_run, "out", paste0("solver_out", "_", timeID, ".txt"))
+  steps <- format(steps, scientific = FALSE, trim = TRUE)
+  n_subintervals <- format(n_subintervals, scientific = FALSE, trim = TRUE)
+  la <- .resolve_la_args(
+    laA = laA,
+    laD = laD,
+    laDi = laDi,
+    cmf_path = paths$cmf
+  )
   solver_param <- paste(
     "-matsol", matsol,
-    if (solmed %=% "Mmid") {
-      paste("-step1", steps[1], "-step2", steps[2], "-step3", steps[3])
+    if (solmed %in% c("Gragg", "Midpoint", "Euler") && length(steps) == 1L) {
+      paste("-step1", steps[1], "-single_run 1")
+    } else if (solmed %in% c("Gragg", "Midpoint", "Euler") && length(steps) == 2L) {
+      paste("-step1", steps[1], "-step2", steps[2], "-two_run 1")
+    } else if (solmed %in% c("Gragg", "Midpoint", "Euler")) {
+      paste0(
+        paste("-step1", steps[1], "-step2", steps[2], "-step3", steps[3]),
+        if (isTRUE(.o_converge())) " -convrule 1" else "",
+        if (!is.null(.o_required_figures())) paste0(" -rqf ", .o_required_figures()) else ""
+      )
     },
-    if (any(is.element(el = matsol, set = c(0, 2, 3)))) {
-      paste("-regset", "REG")
+    if (solmed %in% c("RK2", "Heun", "RK4", "BoSha32", "DoPri54")) {
+      paste("-step1", steps[1])
     },
-    if (enable_time) {
-      "-enable_time"
+    if (solmed %in% c("BoSha32", "DoPri54") && adaptive != "no") {
+      paste("-adaptive", adaptive, "-epstol", eps_tolerance)
     },
     "-nsubints", n_subintervals,
     "-solmed", solmed,
-    "-nesteddbbd", nesteddbbd,
-    "-presol", 1,
-    "-laA", laA,
-    "-laDi", laDi,
-    "-laD", laD,
-    paste("-maxthreads", 1),
+    "-laA", la$laA,
+    "-laDi", la$laDi,
+    "-laD", la$laD,
+    paste("-verbosity", as.integer(verbosity)),
+    paste("-maxthreads", as.integer(n_threads)),
     "-nox"
   )
 
-  if (!is.null(append_args)) {
-    solver_param <- paste(solver_param, paste(append_args, collapse = " "))
+  solver_param <- paste(c(
+    solver_param,
+    if (solmed %in% c("BoSha32", "DoPri54") && adaptive != "no") {
+      paste("-maxretries", as.integer(max_retries), "-retryadj", retry_adjust)
+    },
+    .mode_flag("-assertions", assertions),
+    .mode_flag("-range_test_initial", range_test_initial),
+    .mode_flag("-range_test_updated", range_test_updated),
+    if (.solver_uses_random(paths)) {
+      paste("-random_seed", .o_random_seed())
+    }
+  ), collapse = " ")
+
+  comp_flags <- .comp_cli_flags(complementarity)
+  if (!is.null(comp_flags) && nzchar(comp_flags)) {
+    solver_param <- paste(solver_param, comp_flags)
+  }
+
+  if (!is.null(extra_flags) && nzchar(extra_flags)) {
+    solver_param <- paste(solver_param, extra_flags)
   }
 
   solver_out <- paste("2>&1 | tee", paste0(docker_diagnostic_out, "\""))
@@ -64,7 +124,7 @@
   if (terminal_run) {
     m_exec <- normalizePath(file.path(paths$run, "model_exec.txt"), "/", FALSE)
     cat(solve_cmd, file = m_exec)
-    hsl <- "hsl"
+    container <- .container_name(timeID)
     diag_out <- normalizePath(paths$diag_out, "/", FALSE)
     cmf_path <- paste0("\"", normalizePath(paths$cmf, "/"), "\"")
     .cli_action(solve_info$terminal_run,

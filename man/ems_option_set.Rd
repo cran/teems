@@ -5,55 +5,128 @@
 \title{Set advanced package options}
 \usage{
 ems_option_set(
-  verbose = NULL,
   tempdir = NULL,
+  verbose = NULL,
   ndigits = NULL,
   accuracy_threshold = NULL,
+  accuracy_figures = NULL,
+  accuracy_criterion = NULL,
+  required_figures = NULL,
+  full_exclude = NULL,
   check_shock_status = NULL,
   timestep_header = NULL,
   n_timestep_header = NULL,
-  full_exclude = NULL,
-  docker_tag = NULL
+  docker_tag = NULL,
+  assertions = NULL,
+  range_test_initial = NULL,
+  range_test_updated = NULL,
+  random_seed = NULL,
+  refine = NULL,
+  converge = NULL
 )
 }
 \arguments{
+\item{tempdir}{A character vector length 1. Default is what is
+returned by \code{tempdir()}. Directory where input files, model
+diagnostics, and output files are written as well as where
+the model run takes place (via Docker bind mount).}
+
 \item{verbose}{Logical of length 1 (default is \code{TRUE}). If
 \code{FALSE}, function-specific diagnostics are silenced.}
 
-\item{tempdir}{A character vector length 1. Default is what is
-returned by \code{tempdir()}.}
+\item{ndigits}{Integer (default is \code{6}). Number of digits to
+the right of the decimal point kept when numeric type double
+data are written to file. Values smaller than 0.1 in
+magnitude keep \code{ndigits} significant digits instead, so
+small nonzero data are never rounded to zero.}
 
-\item{ndigits}{Integer (default is \code{6}). Exact number of
-digits to the right of the decimal point to be written to
-file for numeric type double. This value is passed to the
-\code{format()} nsmall argument and \code{round()} digits argument.}
+\item{accuracy_threshold}{Numeric length 1 (default \code{0.8}).
+The share of results that must be accurate to at least
+\code{accuracy_figures} significant figures under
+\code{accuracy_criterion}; a warning is generated if the share is
+lower.}
 
-\item{accuracy_threshold}{Numeric length 1 (default \code{0.8}),
-converted to a percentage. 4-digit precision is compared
-against this threshold; a warning is generated if it is not
-met.}
+\item{accuracy_figures}{Integer length 1 from 1 to 6 (default
+\code{4}). The significant figures a result must reach to count as
+accurate.}
 
-\item{check_shock_status}{Logical of length 1 (default is
-\code{TRUE}). If \code{FALSE}, no check on shock element
-endogenous/exogenous status is conducted.}
+\item{accuracy_criterion}{Character length 1 (default
+\code{"solution"}). Which accuracy summary is judged: \code{"solution"}
+the levels values of the endogenous results, \code{"data"} the
+values read from data files and updated, \code{"both"} the two
+together. The criteria of GEMPACK's automatic accuracy (GEMPACK
+manual 26.4), whose default is \code{"data"}. A run that updates no
+data is judged on the solution under \code{"data"} and \code{"both"}.}
 
-\item{timestep_header}{A character vector length 1 (default is
-\code{"YEAR"}). Coefficient containing a numeric vector of
-timestep intervals. For novel intertemporal models — modify
-with caution.}
-
-\item{n_timestep_header}{A character vector length 1 (default
-is \code{"NTSP"}). Coefficient containing a numeric vector length
-one with sum of timestep intervals. For novel intertemporal
-models — modify with caution.}
+\item{required_figures}{Integer length 1 from 1 to 6 (default
+\code{NULL}, none). Results of a three-solution \code{"Gragg"},
+\code{"Midpoint"} or \code{"Euler"} run whose two extrapolations agree to
+at least this many figures get the convergence code \code{XRA} in the
+accuracy summary (GEMPACK manual 26.2.6, RQF). Reporting only.}
 
 \item{full_exclude}{A character vector of variable length
 (default is \code{c("DREL", "DVER", "XXCR", "XXCD", "XXCP", "SLUG", "EFLG")}). Headers to fully exclude from all aspects
 of the model run. Failure to designate these headers
 properly will result in errors. Modify with caution.}
 
-\item{docker_tag}{Character length 1 (default \code{"latest"}).
-Docker tag specifying which Docker image to use.}
+\item{check_shock_status}{Logical of length 1 (default is
+\code{TRUE}). If \code{FALSE}, no check on the endogenous/exogenous
+status of a variable designated for a shock is conducted.}
+
+\item{timestep_header}{A character vector length 1 (default is
+\code{"YEAR"}). Header written with the time of each period, as
+given in the \code{time_steps} argument of \code{\link[=ems_data]{ems_data()}} (years,
+or steps from the initial period); the model takes the
+differences between consecutive periods as interval lengths.
+For novel intertemporal models — modify with caution.}
+
+\item{n_timestep_header}{A character vector length 1 (default
+is \code{"NTSP"}). Header written with the number of periods (the
+length of \code{time_steps}). For novel intertemporal models —
+modify with caution.}
+
+\item{docker_tag}{Character length 1 (default \code{"latest"}). Tag
+of the \code{teems} Docker image to use.}
+
+\item{assertions}{Character length 1, \code{"fatal"} (default),
+\code{"warn"} or \code{"off"}. Severity of TAB \code{Assertion} statement
+failures: \code{"warn"} reports and continues, \code{"off"} skips the
+checks.}
+
+\item{range_test_initial}{Character length 1, \code{"fatal"}
+(default), \code{"warn"} or \code{"off"}. Severity of declared-range
+violations (e.g. \verb{(ge 0)}) on initial values: every
+coefficient, read or computed, is tested once the initial
+Reads and Formulas are done.}
+
+\item{range_test_updated}{Character length 1, \code{"warn"}
+(default), \code{"fatal"} or \code{"off"}. As \code{range_test_initial},
+for updated values (\verb{range test updated values}).}
+
+\item{random_seed}{Integer (default is \code{1}). Seed of the TAB
+function \code{RANDOM(a,b)}. The same seed reproduces every draw;
+each Formula element keeps its draw across steps and
+extrapolation passes. Change the seed for a new sequence.}
+
+\item{refine}{Logical length 1 (default \code{TRUE}). One step of
+iterative refinement after every linear solve of
+\code{matrix_method = "DBBD"} in \code{\link[=ems_solve]{ems_solve()}}, which brings its
+accuracy to that of \code{"LU"}. Refinement holds the system matrix
+and the block factorizations through each solve, so it raises
+peak memory; the memory estimate counts it. \code{"LU"} and
+\code{"SBBD"} are in practice as accurate as a single LU solve and
+are not refined;
+\code{"NDBBD"} is not refined, as it cannot yet keep its
+factorization for a second solve.}
+
+\item{converge}{Logical length 1 (default \code{FALSE}). If \code{TRUE},
+\code{\link[=ems_solve]{ems_solve()}} applies GEMPACK's treatment of poorly
+converging results (see GEMPACK manual 26.2.5) to a run
+extrapolated from three multi-step solutions: a component
+whose three solutions lie very close together or near zero
+reports their average, one whose solutions do not converge
+cleanly reports the solution with the most steps, and the rest
+are extrapolated. Not available with subtotals.}
 }
 \value{
 \code{invisible(NULL)}, called for its side effects.
@@ -66,8 +139,8 @@ advanced options.
 # Set multiple options
 ems_option_set(verbose = FALSE, ndigits = 8)
 
-# Retrieve value of `verbose`
-ems_option_get("verbose")
+# Retrieve value of `tempdir`
+ems_option_get("tempdir")
 
 # Reset options to default values
 ems_option_reset()

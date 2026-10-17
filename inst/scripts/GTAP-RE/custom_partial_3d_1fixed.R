@@ -39,7 +39,7 @@ aoall_full <- aoall_full[do.call(order, aoall_full), ]
 # Fix REGr="chn"; free dims are ACTSa(5) x ALLTIMEt(4), n=20
 # reduce_shock: free_idx=[1,3] factor=20 is largest -> one het_grp -> k=2
 aoall <- aoall_full[aoall_full$REGr == "chn", ]
-aoall$Value <- runif(nrow(aoall))
+aoall$Value <- runif(nrow(aoall), min = 0, max = 0.1)
 
 aoall_shk <- ems_custom_shock(var = "aoall", input = aoall)
 
@@ -52,8 +52,9 @@ cmf_path <- ems_deploy(
 
 outputs <- ems_solve(
   cmf_path = cmf_path,
-  matrix_method = "LU",
-  solution_method = "Johansen"
+  matrix_method = "SBBD",
+  n_tasks = 2L,
+  solution_method = "Gragg"
 )
 
 # checks

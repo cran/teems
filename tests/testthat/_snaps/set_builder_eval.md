@@ -1,0 +1,37 @@
+# a builder whose coefficient has no loaded data aborts
+
+    x Set builder "NEWSET": no loaded data for its condition coefficient "NODT".
+
+# a builder with the wrong number of arguments aborts
+
+    x Set builder "NEWSET": condition coefficient "VDFB" has 2 dimensions but 1 argument was given.
+
+# a builder naming an element outside the aggregation aborts
+
+    x Set builder "NEWSET": element "fra" is not in the REG dimension of "VDFB" under the current aggregation.
+
+# a builder looping over the wrong dimension aborts
+
+    x Set builder "NEWSET": the loop index "c" must range over "VDFB"'s dimension set REG exactly (source set COMM differs).
+
+# a builder that selects nothing yields an empty set
+
+    Code
+      out <- eval_builder("= (all,c,COMM: VDFB(c,\"chn\") > 5)")
+    Message
+      i Set builder "NEWSET" selected no elements of COMM with `VDFB(c,"chn") > 5`.
+      i The set is empty: statements over it have no tuples and sums over it are zero (GEMPACK manual 11.7.9).
+
+# a mapping-sum builder without its mapping aborts
+
+    x Set builder "NEWSET": the mapping-conditional sum over "MAPRC" cannot be evaluated at deploy.
+    i The sum must range over the mapping's domain set, the builder over its codomain set, and the mapping needs a `(by_elements)` Read whose header is in the set data (GEMPACK manual 10.1.3).
+
+# a formula builder that cannot be evaluated names the reason
+
+    x Set builder "MIND": the condition "NCOMPROD(i)>1" cannot be evaluated at deploy: MAKE is Read from header "MAKE", which is not in the loaded data.
+
+# a set condition dividing by zero while that Zerodivide class is off aborts
+
+    x Set builder "OFF": the condition "Z0(c)/Z0(c) > 1" cannot be evaluated at deploy: a division by zero of the zero_by_zero kind occurs while that Zerodivide class is off (GEMPACK manual 10.11).
+

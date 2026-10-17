@@ -1,5 +1,4 @@
 #' @importFrom purrr map2_chr
-#' 
 #' @keywords internal
 #' @noRd
 .get_scripts <- function(path,
@@ -14,10 +13,11 @@
     mustWork = TRUE
   )
   scripts <- list.files(dir, full.names = TRUE)
-  scripts <- scripts[!grepl(paste0(2:5, "d", collapse = "|"), scripts)]
-  # prep exported ems_meta function to get year quickly
-  scripts <- scripts[!grepl("_year", scripts)]
-  scripts <- scripts[!grepl("scenario", scripts)]
+  nm <- basename(scripts)
+  keep <- !grepl(paste0(2:5, "d", collapse = "|"), nm) &
+    !grepl("_year", nm) &
+    !grepl("scenario", nm)
+  scripts <- scripts[keep]
   templates <- lapply(scripts, readLines)
 
   if (is.list(dat_input)) {

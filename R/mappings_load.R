@@ -1,8 +1,29 @@
-#' @importFrom purrr map map2 walk2
-#' @importFrom data.table data.table rbindlist
+#' @importFrom purrr map2 walk2
+#' @importFrom data.table data.table
 #' @importFrom tools file_ext
 #' @importFrom cli cli_h1 cli_text
-#'
+#' @keywords internal
+#' @noRd
+NULL
+
+#' @noRd
+#' @keywords internal
+.map_layers <- function(metadata) {
+  layers <- c(
+    if (isTRUE(metadata[["aez"]])) {
+      "GTAP-AEZ"
+    },
+    if (isTRUE(metadata[["ep"]])) {
+      "GTAP-EP"
+    }
+  )
+  return(layers)
+}
+
+#' @importFrom purrr map_lgl map2 walk2
+#' @importFrom tools file_ext
+#' @importFrom data.table data.table
+#' @importFrom cli cli_h1 cli_text
 #' @noRd
 #' @keywords internal
 .load_mappings <- function(set_mappings,
@@ -14,7 +35,7 @@
   set_mappings <- purrr::map2(
     set_mappings,
     names(set_mappings),
-    function(m, n) {
+    \(m, n) {
       if (tools::file_ext(m) %=% "") {
         class(m) <- c("internal", class(m))
       } else {
@@ -40,6 +61,7 @@
     .check_set_map,
     data_format = data_format,
     database_version = metadata$database_version,
+    map_layers = .map_layers(metadata),
     call = call,
     set_data = set_data
   )
@@ -81,7 +103,7 @@
     purrr::walk2(
       names(set_mappings)[broadcast],
       set_mappings[broadcast],
-      function(set_name, ele) {
+      \(set_name, ele) {
         ele <- sort(unlist(unique(ele[, 2])))
         cli::cli_text("{set_name}: {.val {ele}}")
       }

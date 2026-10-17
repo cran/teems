@@ -1,7 +1,4 @@
-#' @importFrom cli cli_warn
 #' @importFrom purrr map_lgl
-#' @importFrom tools file_path_sans_ext
-#'
 #' @keywords internal
 #' @noRd
 .implement_compose <- function(args_list,
@@ -15,19 +12,41 @@
   meta <- .parse_solution_meta(sol_prefix = v$sol_prefix)
   avail_vars <- meta$var_union$cofname
   paths <- .get_output_paths(cmf_path = v$cmf_path)
-  avail_coeffs <- if (!is.null(paths$coeff)) {
-    tools::file_path_sans_ext(basename(paths$coeff))
-  } else {
-    character(0)
-  }
-
-  var_names_sel <- character(0)
-  coeff_names_sel <- character(0)
 
   select_all <- args_list$which %=% "all"
 
+  cof_dump <- .has_coefficient_dump(v$sol_prefix)
+  if (!cof_dump && (select_all ||
+    !all(tolower(v$which) %in% tolower(avail_vars)))) {
+    .cli_action(compose_err$no_coef_dump,
+      action = c("abort", "inform"),
+      call = call
+    )
+  }
+  avail_coeffs <- character(0)
+  internal <- character(0)
+  if (cof_dump) {
+    cof_meta <- .parse_coefficient_bins(
+      sol_prefix = v$sol_prefix,
+      read_values = FALSE
+    )$cof_union
+    tab_coeffs <- .retrieve_tab_comp(
+      tab_path = paths[["tab"]],
+      type = "coefficient",
+      call = call
+    )$coefficient
+    avail_coeffs <- tab_coeffs$name[
+      tolower(tab_coeffs$name) %in% cof_meta$cofname
+    ]
+    internal <- tab_coeffs$name[grepl("^backsolve (product|pivot)", tab_coeffs$label)]
+  }
+
+  var_names_sel <- character(0)
+  coeff_names_sel <- if (select_all) setdiff(avail_coeffs, internal) else character(0)
+
   if (!select_all) {
-    invalid <- v$which[!v$which %in% c(avail_vars, avail_coeffs)]
+    which_lc <- tolower(v$which)
+    invalid <- v$which[!which_lc %in% tolower(c(avail_vars, avail_coeffs))]
 
     if (length(invalid) > 0) {
       name <- invalid
@@ -36,21 +55,21 @@
         call = call
       )
     }
-    var_names_sel <- v$which[v$which %in% avail_vars]
-    coeff_names_sel <- v$which[v$which %in% avail_coeffs]
+    var_names_sel <- avail_vars[tolower(avail_vars) %in% which_lc]
+    coeff_names_sel <- avail_coeffs[tolower(avail_coeffs) %in% which_lc]
+    if (isTRUE(v$passes) && length(var_names_sel) == 0L) {
+      .cli_action(compose_err$passes_coefficients,
+        action = c("abort", "inform"),
+        call = call
+      )
+    }
   }
 
-  compose_variable <- select_all || length(var_names_sel) > 0
+  has_solution <- file.exists(paste0(v$sol_prefix, "bin"))
+  compose_variable <- (select_all && has_solution) ||
+    length(var_names_sel) > 0
   compose_coefficient <- (select_all && length(avail_coeffs) > 0) ||
     length(coeff_names_sel) > 0
-
-  if (!select_all && length(coeff_names_sel) > 0) {
-    paths$coeff <- paths$coeff[
-      tools::file_path_sans_ext(basename(paths$coeff)) %in% coeff_names_sel
-    ]
-  } else if (!compose_coefficient) {
-    paths$coeff <- NULL
-  }
 
   type <- if (compose_variable && compose_coefficient) {
     "all"
@@ -73,11 +92,12 @@
     type = type,
     call = call
   )
+  comp_extract$variable <- .levels_linear_expand(comp_extract$variable)
 
   timesteps <- NULL
   metadata <- !is.null(paths$metadata)
 
-  if (any(purrr::map_lgl(sets, function(s) {
+  if (any(purrr::map_lgl(sets, \(s) {
     isTRUE(attr(s, "intertemporal"))
   })) && metadata) {
     timesteps <- .get_timesteps(
@@ -106,20 +126,52 @@
       sol_prefix = v$sol_prefix,
       var_names  = var_names_sel
     )
+    if (isTRUE(v$passes)) {
+      xac <- .parse_solution_xac(
+        sol_prefix = v$sol_prefix,
+        var_tbl = bins$var_union
+      )
+      if (is.null(xac)) {
+        .cli_action(compose_err$no_passes,
+          action = c("abort", "inform"),
+          call = call
+        )
+      }
+      bins$xc <- cbind(bins$xc, xac)
+    }
+    bins$levels <- .var_presim_levels(
+      sol_prefix = v$sol_prefix,
+      var_tbl = bins$var_union,
+      var_extract = comp_extract$variable
+    )
   } else {
     bins <- list(var_union = NULL, xc = NULL)
+  }
+
+  if (compose_coefficient && cof_dump) {
+    cof_bins <- .parse_coefficient_bins(
+      sol_prefix = v$sol_prefix,
+      coeff_names = tolower(coeff_names_sel)
+    )
+  } else {
+    cof_bins <- NULL
   }
 
   output <- .retrieve_output(
     var_tbl      = bins$var_union,
     var_data     = bins$xc,
+    var_levels   = bins$levels,
+    cof_tbl      = cof_bins$cof_union,
+    cof_data     = cof_bins$xc,
     type         = type,
     comp_extract = comp_extract,
-    paths        = paths,
     sets         = sets,
     time_steps   = timesteps,
     call         = call
   )
+  if (isTRUE(v$passes)) {
+    attr(output, "accuracy") <- .passes_accuracy(output)
+  }
 
   return(output)
 }
