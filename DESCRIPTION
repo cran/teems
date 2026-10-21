@@ -1,6 +1,6 @@
 Package: teems
 Title: Trade and Environment Equilibrium Modeling System
-Version: 1.0.0
+Version: 1.0.1
 Authors@R: c(
     person(
       given = "Matthew",
@@ -51,7 +51,7 @@ Language: en-US
 RoxygenNote: 7.3.3
 SystemRequirements: Docker (https://www.docker.com)
 NeedsCompilation: yes
-Packaged: 2026-10-17 20:02:49 UTC; mpc
+Packaged: 2026-10-21 08:45:50 UTC; mpc
 Author: Matthew Cantele [aut, cre, cph] (ORCID:
     <https://orcid.org/0000-0003-3729-1764>),
   Tom Kompas [ctb, ths] (ORCID: <https://orcid.org/0000-0002-0665-0966>),
@@ -59,4 +59,4 @@ Author: Matthew Cantele [aut, cre, cph] (ORCID:
   Martin Ingram [ctb] (ORCID: <https://orcid.org/0000-0001-6269-8342>)
 Maintainer: Matthew Cantele <matthew.cantele@protonmail.com>
 Repository: CRAN
-Date/Publication: 2026-10-17 20:30:02 UTC
+Date/Publication: 2026-10-21 13:10:02 UTC

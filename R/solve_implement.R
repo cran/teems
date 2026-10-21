@@ -68,8 +68,6 @@
     laDi = v$laDi,
     extra_flags = paste(c(.extra_cli_flags(v), extra_flags), collapse = " ")
   )
-  .clear_solution_files(run_dir = paths$run)
-
   if (isFALSE(cmds)) {
     .solve_lock_release(lock_path)
     return(invisible(NULL))
@@ -79,23 +77,12 @@
   on.exit(if (!completed) .container_remove(timeID), add = TRUE, after = FALSE)
 
   status <- 0L
-  if (Sys.info()[["sysname"]] == "Windows") {
-    captured <- character(0)
-    elapsed_time <- system.time(
-      captured <- suppressWarnings(system(cmds$solve, intern = TRUE))
+  elapsed_time <- system.time(
+    status <- .relay_solver_cmd(cmds$solve,
+      verbosity = as.integer(v$verbosity),
+      timeID = timeID
     )
-    if (.o_verbose()) {
-      cat(captured, sep = "\n")
-    }
-    status <- attr(captured, "status") %|||% 0L
-  } else if (.o_verbose()) {
-    elapsed_time <- system.time(status <- system(cmds$solve))
-  } else {
-    elapsed_time <- system.time(status <- system(cmds$solve,
-      ignore.stdout = TRUE,
-      ignore.stderr = TRUE
-    ))
-  }
+  )
   completed <- TRUE
 
   .check_solver_log(

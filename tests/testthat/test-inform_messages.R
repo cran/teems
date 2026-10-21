@@ -80,7 +80,7 @@ test_that("a finished run reports its elapsed time and accuracy", {
   expect_true(any(grepl("^ +3 +2 +2$", record)))
   expect_true(any(grepl("^Required figures \\(XRA\\): 3$", record)))
   expect_true(any(grepl("^XMA +90 +6$", record)))
-  expect_true(any(grepl("^FC0 +2$", record)))
+  expect_true(any(grepl("^FC0 +2 +-$", record)))
   expect_true(any(grepl("^MD! +1 +0$", record)))
 })
 
@@ -111,6 +111,35 @@ test_that("the accuracy share is judged on levels figures, judged-zero results c
     run_dir = run_dir,
     call = NULL
   ), "70%")
+})
+
+test_that("Zerodivide substitutions are reported once, pointing at the diagnostics file", {
+  run_dir <- withr::local_tempdir()
+  zdiv <- paste(
+    "Warning: 60 division(s) of a nonzero value by zero or power(s) of zero to a negative exponent in Formula",
+    c("boutax", "uetax", "uinctax"),
+    "took the Zerodivide default 0.333333 (GEMPACK manual 10.11, 34.3): x = a / b;"
+  )
+  expect_message(
+    .inform_diagnostics(
+      elapsed_time = c(0, 0, 1),
+      model_log = c("Prepare time 0.1", zdiv, "Gragg solve time 1.0 s"),
+      run_dir = run_dir,
+      call = NULL
+    ),
+    "substituted in 3 statements"
+  )
+  record <- readLines(file.path(run_dir, "model_diagnostics.txt"))
+  expect_identical(sum(grepl("took the Zerodivide default", record, fixed = TRUE)), 3L)
+  expect_message(
+    .inform_diagnostics(
+      elapsed_time = c(0, 0, 1),
+      model_log = zdiv[1],
+      run_dir = run_dir,
+      call = NULL
+    ),
+    "in 1 statement "
+  )
 })
 
 test_that("a run without an accuracy summary reports nothing", {

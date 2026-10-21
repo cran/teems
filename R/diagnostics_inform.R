@@ -10,7 +10,14 @@
 
   cat("\n", append = TRUE, file = diagnostic_file)
   cat("-- Solver log --\n\n", append = TRUE, file = diagnostic_file)
-  cat(paste(model_log, collapse = "\n"), "\n", append = TRUE, file = diagnostic_file)
+  cat(paste(.solver_log_format(model_log), collapse = "\n"), "\n", append = TRUE, file = diagnostic_file)
+
+  n_zdiv <- sum(grepl("took the Zerodivide default", model_log, fixed = TRUE))
+  if (n_zdiv > 0L) {
+    .cli_action(solve_info$zerodivide,
+      action = "inform"
+    )
+  }
 
   stats_path <- file.path(run_dir, "out", "variables", "bin", "sol.stats.json")
   stats <- if (file.exists(stats_path)) {
@@ -132,7 +139,7 @@
   if (length(codes) > 0L) {
     code_rows <- vapply(names(codes), \(nm) {
       lowest <- as.numeric(unlist(codes[[nm]]$lowest_figures))
-      lowest_txt <- if (length(lowest) == 0L || is.na(lowest[1])) "" else sprintf("%14.0f", lowest[1])
+      lowest_txt <- if (length(lowest) == 0L || is.na(lowest[1])) sprintf("%14s", "-") else sprintf("%14.0f", lowest[1])
       row <- sprintf("%-4s  %7.0f  %s", nm, as.numeric(codes[[nm]]$results), lowest_txt)
       return(trimws(row, which = "right"))
     }, character(1))

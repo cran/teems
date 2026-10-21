@@ -51,7 +51,7 @@
   n_tasks <- format(n_tasks, scientific = FALSE, trim = TRUE)
   exec_preamble <- paste(
     docker_preamble,
-    '"set -o pipefail; /opt/teems-solver/lib/mpi/bin/mpiexec',
+    paste0('"set -o pipefail; ', .clear_solution_files_cmd(paths$docker_run), "; /opt/teems-solver/lib/mpi/bin/mpiexec"),
     "-n", n_tasks,
     solver_bin,
     "-cmdfile", paths$docker_cmf
@@ -90,7 +90,7 @@
     "-laA", la$laA,
     "-laDi", la$laDi,
     "-laD", la$laD,
-    paste("-verbosity", as.integer(verbosity)),
+    paste("-verbosity", max(1L, as.integer(verbosity))),
     paste("-maxthreads", as.integer(n_threads)),
     "-nox"
   )
